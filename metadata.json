@@ -1,6 +1,6 @@
 {
   "name": "ShiftLift Nutrition Vision & Protocol Tracker",
-  "description": "AI nutrition vision engine and meal tracker with portion estimation and 4-Day Shift & Early Lift Nutrition Protocol analysis.",
+  "description": "AI nutrition vision engine, gym progress photo comparison tracker, meal logging streak counter, and 4-Day Shift & Early Lift Nutrition Protocol analysis.",
   "requestFramePermissions": [
     "camera"
   ],

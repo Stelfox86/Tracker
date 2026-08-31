@@ -9,17 +9,22 @@ import {
   Calendar,
   Activity,
   Bell,
-  BellRing
+  BellRing,
+  Trophy,
+  Dumbbell
 } from 'lucide-react';
-import { PROTOCOL_MEAL_SLOTS, ReminderSettings } from '../types';
+import { PROTOCOL_MEAL_SLOTS, ReminderSettings, StreakStats } from '../types';
 
 interface HeaderProps {
   shiftDay: number;
   reminderSettings: ReminderSettings;
+  streakStats: StreakStats;
   onSelectShiftDay: (day: number) => void;
   onOpenGuide: () => void;
   onOpenSchemaModal: () => void;
   onOpenReminders: () => void;
+  onOpenStreakDetails: () => void;
+  onOpenGymProgress: () => void;
   onResetDay: () => void;
   onExportJson: () => void;
   onQuickAnalyzeClick: () => void;
@@ -28,10 +33,13 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   shiftDay,
   reminderSettings,
+  streakStats,
   onSelectShiftDay,
   onOpenGuide,
   onOpenSchemaModal,
   onOpenReminders,
+  onOpenStreakDetails,
+  onOpenGymProgress,
   onResetDay,
   onExportJson,
   onQuickAnalyzeClick,
@@ -47,6 +55,8 @@ export const Header: React.FC<HeaderProps> = ({
     const slotMins = h * 60 + m;
     return Math.abs(currentMinutesTotal - slotMins) <= 90;
   }) || PROTOCOL_MEAL_SLOTS[0];
+
+  const streakDays = Math.max(1, streakStats?.currentStreak || 1);
 
   return (
     <header className="bg-white border-b border-[#E1E3E1] sticky top-0 z-30 shadow-sm">
@@ -67,6 +77,16 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-[#E7F3EF] text-[#006C4C] border border-[#006C4C]/20">
                   4-Day Shift Protocol
                 </span>
+
+                {/* Header Streak Flame Badge */}
+                <button
+                  onClick={onOpenStreakDetails}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-gradient-to-r from-amber-500/10 to-rose-500/10 text-amber-700 border border-amber-400/40 hover:bg-amber-100/60 transition-all cursor-pointer shadow-2xs"
+                  title="View streak details & milestones"
+                >
+                  <Flame className="w-3.5 h-3.5 fill-amber-500 text-amber-500 animate-pulse" />
+                  <span>{streakDays}d Streak</span>
+                </button>
               </div>
               <div className="flex items-center gap-2.5 text-xs text-[#5E6266] mt-0.5 font-medium">
                 <span className="flex items-center gap-1">
@@ -105,14 +125,23 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
 
             {/* Quick Action Buttons */}
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <button
                 onClick={onQuickAnalyzeClick}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold bg-[#006C4C] hover:bg-[#00573D] text-white shadow-sm transition-all active:scale-95 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-[#006C4C] hover:bg-[#00573D] text-white shadow-sm transition-all active:scale-95 cursor-pointer"
                 title="Scan meal with Vision AI"
               >
                 <Sparkles className="w-3.5 h-3.5" />
                 Scan Meal
+              </button>
+
+              <button
+                onClick={onOpenGymProgress}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-[#1A1C1E] hover:bg-[#2D3135] text-white shadow-sm transition-all active:scale-95 cursor-pointer"
+                title="Gym progress photo comparison AI"
+              >
+                <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                <span>Gym Progress</span>
               </button>
 
               <button
@@ -125,7 +154,7 @@ export const Header: React.FC<HeaderProps> = ({
                 title={`Configure Meal Reminders (${reminderSettings.advanceMinutes}m advance)`}
               >
                 <Bell className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Reminders</span>
+                <span className="hidden lg:inline">Reminders</span>
                 <span className="text-[10px] font-bold px-1 rounded bg-black/10">
                   {reminderSettings.advanceMinutes}m
                 </span>
@@ -137,16 +166,16 @@ export const Header: React.FC<HeaderProps> = ({
                 title="View Protocol Guide & Baseline Schedule"
               >
                 <BookOpen className="w-3.5 h-3.5 text-[#006A6A]" />
-                <span className="hidden sm:inline">Protocol Guide</span>
+                <span className="hidden lg:inline">Guide</span>
               </button>
 
               <button
                 onClick={onOpenSchemaModal}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-[#1A1C1E] bg-white hover:bg-[#F8F9FA] border border-[#E1E3E1] transition-colors"
+                className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold text-[#1A1C1E] bg-white hover:bg-[#F8F9FA] border border-[#E1E3E1] transition-colors"
                 title="View Vision API JSON Schema"
               >
                 <span className="font-mono text-[10px] text-[#006C4C] font-bold">{'{ }'}</span>
-                <span className="hidden sm:inline">JSON API</span>
+                <span className="hidden xl:inline">API</span>
               </button>
 
               <button

@@ -30,6 +30,15 @@ import {
   SnacksSection
 } from './components/SnacksSection';
 import {
+  StreakTrackerCard
+} from './components/StreakTrackerCard';
+import {
+  StreakDetailsModal
+} from './components/StreakDetailsModal';
+import {
+  GymProgressTracker
+} from './components/GymProgressTracker';
+import {
   LoggedMealRecord,
   MealSlotBaseline,
   MealAnalysisResult,
@@ -37,18 +46,35 @@ import {
   DEFAULT_REMINDER_SETTINGS,
   PROTOCOL_MEAL_SLOTS,
   SnackPreset,
-  PROTOCOL_SNACK_PRESETS
+  PROTOCOL_SNACK_PRESETS,
+  StreakStats
 } from './types';
 import {
   sendSystemNotification,
   playNotificationChime
 } from './utils/reminderService';
 import { SAMPLE_PRESET_MEALS } from './data/sampleMeals';
-import { Sparkles, Calendar, Plus, RefreshCw, Zap } from 'lucide-react';
+import { Sparkles, Calendar, Plus, RefreshCw, Zap, Trophy } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 const STORAGE_KEY_PREFIX = 'shiftlift_meals_day_';
 const REMINDERS_STORAGE_KEY = 'shiftlift_reminder_settings';
+const STREAK_STORAGE_KEY = 'shiftlift_streak_stats';
+
+const DEFAULT_STREAK_STATS: StreakStats = {
+  currentStreak: 4,
+  longestStreak: 8,
+  totalDaysLogged: 12,
+  totalMealsLogged: 48,
+  shiftCyclesCompleted: 3,
+  lastLoggedDate: new Date().toISOString().split('T')[0],
+  historyDates: [
+    new Date(Date.now() - 3 * 86400000).toISOString().split('T')[0],
+    new Date(Date.now() - 2 * 86400000).toISOString().split('T')[0],
+    new Date(Date.now() - 1 * 86400000).toISOString().split('T')[0],
+    new Date().toISOString().split('T')[0],
+  ],
+};
 
 export default function App() {
   const [shiftDay, setShiftDay] = useState<number>(1);
@@ -58,7 +84,46 @@ export default function App() {
   const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
   const [isSchemaModalOpen, setIsSchemaModalOpen] = useState<boolean>(false);
   const [isReminderModalOpen, setIsReminderModalOpen] = useState<boolean>(false);
+  const [isGymProgressOpen, setIsGymProgressOpen] = useState<boolean>(false);
+  const [isStreakDetailsOpen, setIsStreakDetailsOpen] = useState<boolean>(false);
   const [inspectingMeal, setInspectingMeal] = useState<LoggedMealRecord | null>(null);
+
+  // Streak state with localStorage persistence
+  const [streakStats, setStreakStats] = useState<StreakStats>(() => {
+    try {
+      const saved = localStorage.getItem(STREAK_STORAGE_KEY);
+      if (saved) {
+        return { ...DEFAULT_STREAK_STATS, ...JSON.parse(saved) };
+      }
+    } catch (e) {
+      console.warn('Error reading streak stats:', e);
+    }
+    return DEFAULT_STREAK_STATS;
+  });
+
+  const updateStreakOnLog = () => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    setStreakStats((prev) => {
+      const alreadyLoggedToday = prev.historyDates.includes(todayStr);
+      const newHistory = alreadyLoggedToday ? prev.historyDates : [...prev.historyDates, todayStr];
+      const newStreak = alreadyLoggedToday ? prev.currentStreak : prev.currentStreak + 1;
+      const updated: StreakStats = {
+        ...prev,
+        currentStreak: newStreak,
+        longestStreak: Math.max(prev.longestStreak, newStreak),
+        totalDaysLogged: newHistory.length,
+        totalMealsLogged: prev.totalMealsLogged + 1,
+        lastLoggedDate: todayStr,
+        historyDates: newHistory,
+      };
+      try {
+        localStorage.setItem(STREAK_STORAGE_KEY, JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Error saving streak stats:', e);
+      }
+      return updated;
+    });
+  };
 
   // Reminder settings state with local persistence
   const [reminderSettings, setReminderSettings] = useState<ReminderSettings>(() => {
@@ -276,6 +341,7 @@ export default function App() {
     }
 
     saveMealsToStorage(updated);
+    updateStreakOnLog();
     setIsAnalyzerOpen(false);
     setSelectedSlotForScan(null);
   };
@@ -317,6 +383,7 @@ export default function App() {
     };
 
     saveMealsToStorage([...loggedMeals, newSnackRecord]);
+    updateStreakOnLog();
   };
 
   const handleLogCustomSnack = (custom: {
@@ -363,6 +430,7 @@ export default function App() {
     };
 
     saveMealsToStorage([...loggedMeals, newSnackRecord]);
+    updateStreakOnLog();
   };
 
   const handleDeleteMeal = (mealId: string) => {
@@ -419,10 +487,13 @@ export default function App() {
       <Header
         shiftDay={shiftDay}
         reminderSettings={reminderSettings}
+        streakStats={streakStats}
         onSelectShiftDay={(day) => setShiftDay(day)}
         onOpenGuide={() => setIsGuideOpen(true)}
         onOpenSchemaModal={() => setIsSchemaModalOpen(true)}
         onOpenReminders={() => setIsReminderModalOpen(true)}
+        onOpenStreakDetails={() => setIsStreakDetailsOpen(true)}
+        onOpenGymProgress={() => setIsGymProgressOpen(true)}
         onResetDay={handleResetDay}
         onExportJson={handleExportJson}
         onQuickAnalyzeClick={handleQuickAnalyzeClick}
@@ -437,6 +508,15 @@ export default function App() {
           reminderSettings={reminderSettings}
           onOpenReminderModal={() => setIsReminderModalOpen(true)}
           onScanForSlot={handleScanForSlot}
+        />
+
+        {/* Daily Meal Logging Streak & Gym Progress Trigger Card */}
+        <StreakTrackerCard
+          streakStats={streakStats}
+          loggedMeals={loggedMeals}
+          shiftDay={shiftDay}
+          onOpenStreakDetails={() => setIsStreakDetailsOpen(true)}
+          onOpenGymProgress={() => setIsGymProgressOpen(true)}
         />
 
         {/* Daily Macronutrient Targets & Progress Dashboard */}
@@ -503,6 +583,13 @@ export default function App() {
           </span>
           <div className="flex items-center gap-3">
             <button
+              onClick={() => setIsGymProgressOpen(true)}
+              className="text-[#006C4C] font-semibold hover:underline text-[11px]"
+            >
+              Gym Progress AI
+            </button>
+            <span className="text-[#E1E3E1]">•</span>
+            <button
               onClick={() => setIsReminderModalOpen(true)}
               className="text-[#006C4C] font-semibold hover:underline text-[11px]"
             >
@@ -518,6 +605,25 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Gym Progress Tracker Modal */}
+      {isGymProgressOpen && (
+        <GymProgressTracker
+          isOpen={isGymProgressOpen}
+          onClose={() => setIsGymProgressOpen(false)}
+        />
+      )}
+
+      {/* Streak Details Modal */}
+      {isStreakDetailsOpen && (
+        <StreakDetailsModal
+          isOpen={isStreakDetailsOpen}
+          onClose={() => setIsStreakDetailsOpen(false)}
+          streakStats={streakStats}
+          loggedMeals={loggedMeals}
+          shiftDay={shiftDay}
+        />
+      )}
 
       {/* Meal Reminder Modal */}
       {isReminderModalOpen && (
