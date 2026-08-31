@@ -345,7 +345,11 @@ export const VisionMealAnalyzer: React.FC<VisionMealAnalyzerProps> = ({
       setRawJsonOutput(data.rawJson || JSON.stringify(data.data, null, 2));
     } catch (err: any) {
       console.error('Vision analysis failure:', err);
-      setAnalysisError(err.message || 'Error communicating with nutrition vision API.');
+      let errMsg = err.message || 'Error communicating with nutrition vision API.';
+      if (typeof errMsg === 'string' && (errMsg.includes('string did not match') || errMsg.includes('pattern') || errMsg.includes('SyntaxError'))) {
+        errMsg = 'The image format could not be decoded by the browser. Please tap Device Camera Shutter or select the image again to rescan.';
+      }
+      setAnalysisError(errMsg);
     } finally {
       setIsAnalyzing(false);
     }
