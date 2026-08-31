@@ -340,15 +340,16 @@ app.post('/api/analyze-meal', async (req, res) => {
   }
 });
 
-// Helper to test if string is strictly valid Base64
+// Helper to test if string is valid Base64
 function isValidBase64String(str: string): boolean {
   if (!str || typeof str !== 'string') return false;
   if (str.length < 50) return false;
-  // Strip padding and whitespace for check
-  const clean = str.trim();
-  // Valid base64 chars regex
-  const base64Regex = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
-  return base64Regex.test(clean);
+  try {
+    const buf = Buffer.from(str, 'base64');
+    return buf.length > 20;
+  } catch {
+    return false;
+  }
 }
 
 // Helper to resolve and normalize image data (supports base64, data URLs, and remote HTTP/HTTPS URLs)
@@ -371,12 +372,13 @@ async function resolveImageBase64(input: string, defaultMime: string = 'image/jp
         if (!['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(mimeType.toLowerCase())) {
           mimeType = 'image/jpeg';
         }
-        return { base64, mimeType };
+        if (isValidBase64String(base64)) {
+          return { base64, mimeType };
+        }
       }
     } catch (err) {
       console.warn('Could not fetch remote image URL:', err);
     }
-    // If remote URL failed to fetch, do NOT treat the URL string as base64!
     return null;
   }
 
