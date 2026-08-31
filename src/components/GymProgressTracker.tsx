@@ -129,38 +129,71 @@ export const GymProgressTracker: React.FC<GymProgressTrackerProps> = ({
     if (isDraggingSlider) handleSliderMove(e.clientX);
   };
 
-  // Client-side image compression to handle any phone photo size smoothly
-  const compressImage = (dataUrl: string, maxDim = 1280, quality = 0.85): Promise<string> => {
+  // Bulletproof client-side image compression with WebKit/Safari safeguards
+  const compressImage = (dataUrl: string, maxDim = 1200, quality = 0.82): Promise<string> => {
     return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
+      try {
+        if (!dataUrl || typeof dataUrl !== 'string') {
+          return resolve(dataUrl || '');
+        }
+        // If not a data URL (e.g. remote https:// or empty), resolve directly
+        if (!dataUrl.startsWith('data:image')) {
+          return resolve(dataUrl);
+        }
+        // If data URL is already lightweight (< 400KB), resolve directly
+        if (dataUrl.length < 400000) {
+          return resolve(dataUrl);
+        }
+
+        const img = new Image();
+        img.onload = () => {
+          try {
+            let width = img.naturalWidth || img.width || 0;
+            let height = img.naturalHeight || img.height || 0;
+
+            if (width <= 0 || height <= 0) {
+              return resolve(dataUrl);
+            }
+
+            if (width > maxDim || height > maxDim) {
+              if (width > height) {
+                height = Math.round((height * maxDim) / width);
+                width = maxDim;
+              } else {
+                width = Math.round((width * maxDim) / height);
+                height = maxDim;
+              }
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, width, height);
+              try {
+                const compressedUrl = canvas.toDataURL('image/jpeg', quality);
+                if (compressedUrl && compressedUrl.startsWith('data:image')) {
+                  return resolve(compressedUrl);
+                }
+              } catch (canvasErr) {
+                console.warn('Canvas export fallback:', canvasErr);
+              }
+            }
+            return resolve(dataUrl);
+          } catch (e) {
+            return resolve(dataUrl);
           }
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', quality));
-        } else {
-          resolve(dataUrl);
-        }
-      };
-      img.onerror = () => resolve(dataUrl);
-      img.src = dataUrl;
+        };
+        img.onerror = () => resolve(dataUrl);
+        img.src = dataUrl;
+      } catch (outerErr) {
+        resolve(dataUrl);
+      }
     });
   };
 
-  // Image upload handler
+  // Image upload handler with safety
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -177,10 +210,13 @@ export const GymProgressTracker: React.FC<GymProgressTrackerProps> = ({
         }
       }
     };
+    reader.onerror = () => {
+      console.warn('File reading error, ignoring');
+    };
     reader.readAsDataURL(file);
   };
 
-  // Run AI Comparison
+  // Run AI Comparison with graceful handling
   const handleRunAiComparison = async (
     curImg: string,
     prevImg?: string,
@@ -193,9 +229,29 @@ export const GymProgressTracker: React.FC<GymProgressTrackerProps> = ({
     setAnalysisError(null);
 
     try {
-      // Compress if needed before sending
-      const readyCurImg = curImg.startsWith('data:image') ? await compressImage(curImg) : curImg;
-      const readyPrevImg = prevImg && prevImg.startsWith('data:image') ? await compressImage(prevImg) : prevImg;
+      if (!curImg) {
+        throw new Error('Please select or upload a photo to analyze.');
+      }
+
+      // Safely prepare images
+      let readyCurImg = curImg;
+      let readyPrevImg = prevImg;
+
+      try {
+        if (curImg.startsWith('data:image')) {
+          readyCurImg = await compressImage(curImg);
+        }
+      } catch (e) {
+        readyCurImg = curImg;
+      }
+
+      try {
+        if (prevImg && prevImg.startsWith('data:image')) {
+          readyPrevImg = await compressImage(prevImg);
+        }
+      } catch (e) {
+        readyPrevImg = prevImg;
+      }
 
       const response = await fetch('/api/analyze-physique', {
         method: 'POST',
@@ -203,10 +259,10 @@ export const GymProgressTracker: React.FC<GymProgressTrackerProps> = ({
         body: JSON.stringify({
           currentImageBase64: readyCurImg,
           previousImageBase64: readyPrevImg || undefined,
-          currentWeightKg: curWeight,
-          previousWeightKg: prevWeight,
-          pose,
-          userNotes: notes,
+          currentWeightKg: typeof curWeight === 'number' && !isNaN(curWeight) ? curWeight : undefined,
+          previousWeightKg: typeof prevWeight === 'number' && !isNaN(prevWeight) ? prevWeight : undefined,
+          pose: pose || 'front_flexed',
+          userNotes: notes || '',
           daysBetween: 14,
         }),
       });
@@ -219,7 +275,12 @@ export const GymProgressTracker: React.FC<GymProgressTrackerProps> = ({
       return json.data as PhysiqueAnalysisResult;
     } catch (err: any) {
       console.error('Error running AI physique analysis:', err);
-      setAnalysisError(err.message || 'An error occurred during AI analysis. Please try again.');
+      // Clean up technical regex/DOM exception messages for a friendly user experience
+      let userFriendlyMsg = err?.message || 'An error occurred during AI analysis. Please try again.';
+      if (userFriendlyMsg.includes('The string did not match') || userFriendlyMsg.includes('pattern')) {
+        userFriendlyMsg = 'Could not process the photo format. Please try re-selecting your photo or running again.';
+      }
+      setAnalysisError(userFriendlyMsg);
       return null;
     } finally {
       setIsAnalyzing(false);
