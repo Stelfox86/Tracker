@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   UploadCloud,
   Camera,
@@ -19,7 +19,10 @@ import {
   Code2,
   Sliders,
   CheckCircle2,
-  X
+  X,
+  Smartphone,
+  VideoOff,
+  SwitchCamera
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -57,11 +60,16 @@ export const VisionMealAnalyzer: React.FC<VisionMealAnalyzerProps> = ({
 
   // Camera capture state
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
+  const [isCameraLoading, setIsCameraLoading] = useState<boolean>(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
+  const [currentFacingMode, setCurrentFacingMode] = useState<'environment' | 'user'>('environment');
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const nativeCameraInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Stop camera when unmounting or switching tabs
+  // Stop camera when unmounting
   useEffect(() => {
     return () => {
       if (cameraStream) {
@@ -70,43 +78,121 @@ export const VisionMealAnalyzer: React.FC<VisionMealAnalyzerProps> = ({
     };
   }, [cameraStream]);
 
-  const startCamera = async () => {
-    try {
-      setAnalysisError(null);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      });
-      setCameraStream(stream);
-      setIsCameraActive(true);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-      }
-    } catch (err: any) {
-      console.error('Camera access error:', err);
-      setAnalysisError('Unable to access camera. Please verify camera permissions or upload an image.');
+  // Robustly bind the stream to the video element whenever stream or active state updates
+  useEffect(() => {
+    if (isCameraActive && cameraStream && videoRef.current) {
+      const videoEl = videoRef.current;
+      videoEl.srcObject = cameraStream;
+      videoEl.onloadedmetadata = () => {
+        videoEl.play().catch((err) => {
+          console.warn('Video auto-play was prevented:', err);
+        });
+      };
     }
-  };
+  }, [isCameraActive, cameraStream]);
 
-  const stopCamera = () => {
+  const stopCamera = useCallback(() => {
     if (cameraStream) {
       cameraStream.getTracks().forEach((track) => track.stop());
       setCameraStream(null);
     }
     setIsCameraActive(false);
+    setIsCameraLoading(false);
+  }, [cameraStream]);
+
+  const startCamera = async (facing: 'environment' | 'user' = currentFacingMode) => {
+    setIsCameraLoading(true);
+    setCameraError(null);
+    setAnalysisError(null);
+
+    // Stop existing stream if running
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      setCameraStream(null);
+    }
+
+    try {
+      if (!navigator?.mediaDevices?.getUserMedia) {
+        throw new Error('Camera is not supported in this browser or iframe. Please use the Device Camera button or upload an image.');
+      }
+
+      let stream: MediaStream | null = null;
+
+      // Tier 1: Try with requested facing mode and resolution
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: facing },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        });
+      } catch (err1) {
+        console.warn('Tier 1 camera constraints failed, attempting fallback to generic video:', err1);
+        // Tier 2: Try basic generic video stream
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
+        } catch (err2: any) {
+          throw err2;
+        }
+      }
+
+      if (stream) {
+        setCameraStream(stream);
+        setIsCameraActive(true);
+        setCurrentFacingMode(facing);
+
+        // Enumerate video devices for quick switching
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const videoDevs = devices.filter((d) => d.kind === 'videoinput');
+          setAvailableCameras(videoDevs);
+        } catch (enumErr) {
+          console.warn('Could not enumerate video devices:', enumErr);
+        }
+      }
+    } catch (err: any) {
+      console.error('Camera access error:', err);
+      let message = 'Unable to access camera.';
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        message = 'Camera permission was denied. Please allow camera permissions in your browser or use the Device Camera button.';
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        message = 'No camera device found on this system.';
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        message = 'Camera is already in use by another application or tab.';
+      } else if (err.message) {
+        message = err.message;
+      }
+      setCameraError(message);
+      setIsCameraActive(false);
+    } finally {
+      setIsCameraLoading(false);
+    }
+  };
+
+  const toggleFacingMode = () => {
+    const nextMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+    setCurrentFacingMode(nextMode);
+    startCamera(nextMode);
   };
 
   const capturePhoto = () => {
     if (!videoRef.current) return;
+    const video = videoRef.current;
     const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth || 640;
-    canvas.height = videoRef.current.videoHeight || 480;
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const base64 = canvas.toDataURL('image/jpeg', 0.85);
       setImagePreview(base64);
+      setAnalysisResult(null);
+      setAnalysisError(null);
       stopCamera();
     }
   };
@@ -444,38 +530,136 @@ export const VisionMealAnalyzer: React.FC<VisionMealAnalyzerProps> = ({
           </div>
         )}
 
-        {/* Tab 3: Live Camera Viewfinder */}
+        {/* Tab 3: Live Camera Viewfinder & Device Shutter */}
         {activeTab === 'camera' && (
-          <div className="bg-[#1A1C1E] rounded-xl p-4 border border-[#E1E3E1] flex flex-col items-center">
+          <div className="bg-[#F8F9FA] rounded-xl p-5 border border-[#E1E3E1] flex flex-col items-center">
+            {/* Hidden native device camera input */}
+            <input
+              ref={nativeCameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={handleFileUpload}
+            />
+
             {isCameraActive ? (
-              <div className="relative rounded-lg overflow-hidden max-w-md w-full bg-black aspect-video">
-                <video ref={videoRef} className="w-full h-full object-cover" playsInline muted />
-                <div className="absolute inset-0 border-2 border-[#00FF9C]/60 rounded-lg pointer-events-none" />
-                <div className="absolute bottom-3 inset-x-0 flex items-center justify-center gap-3">
+              <div className="relative rounded-xl overflow-hidden max-w-lg w-full bg-black aspect-video shadow-md border border-[#1A1C1E]">
+                <video
+                  ref={videoRef}
+                  className="w-full h-full object-cover"
+                  playsInline
+                  autoPlay
+                  muted
+                />
+                
+                {/* Viewfinder crosshairs overlay */}
+                <div className="absolute inset-4 border border-dashed border-[#006C4C]/60 rounded-lg pointer-events-none flex items-center justify-center">
+                  <div className="w-12 h-12 border-2 border-[#006C4C] rounded-full opacity-40 animate-pulse" />
+                </div>
+
+                {/* Top bar controls in camera */}
+                <div className="absolute top-3 right-3 flex items-center gap-2">
+                  <button
+                    onClick={toggleFacingMode}
+                    className="px-2.5 py-1.5 rounded-lg bg-black/60 hover:bg-black/80 backdrop-blur-sm text-white text-xs font-semibold flex items-center gap-1.5 transition-colors border border-white/20"
+                    title="Switch camera"
+                  >
+                    <SwitchCamera className="w-3.5 h-3.5" />
+                    <span>Flip</span>
+                  </button>
+                </div>
+
+                {/* Bottom viewfinder controls */}
+                <div className="absolute bottom-3 inset-x-0 flex items-center justify-center gap-3 px-4">
                   <button
                     onClick={capturePhoto}
-                    className="px-4 py-2 rounded-lg bg-[#006C4C] hover:bg-[#00573D] text-white font-bold text-xs shadow-lg flex items-center gap-1.5 transition-all"
+                    className="px-5 py-2.5 rounded-lg bg-[#006C4C] hover:bg-[#00573D] text-white font-bold text-xs shadow-lg flex items-center gap-2 transition-all active:scale-95 cursor-pointer"
                   >
                     <Camera className="w-4 h-4" />
-                    Snap Meal
+                    Capture Photo
                   </button>
                   <button
                     onClick={stopCamera}
-                    className="px-3 py-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white text-xs"
+                    className="px-3.5 py-2.5 rounded-lg bg-black/70 hover:bg-black/90 text-slate-200 text-xs font-semibold transition-colors border border-white/20"
                   >
                     Cancel
                   </button>
                 </div>
               </div>
+            ) : isCameraLoading ? (
+              <div className="py-12 flex flex-col items-center justify-center gap-3">
+                <RefreshCw className="w-8 h-8 text-[#006C4C] animate-spin" />
+                <span className="text-xs font-bold text-[#1A1C1E]">
+                  Starting camera stream...
+                </span>
+                <span className="text-[11px] text-[#5E6266]">
+                  Requesting camera permissions
+                </span>
+              </div>
+            ) : cameraError ? (
+              <div className="max-w-md w-full p-4 rounded-xl bg-[#FCE8E6] border border-[#E46962]/40 text-center space-y-3">
+                <div className="flex items-center justify-center gap-2 text-[#C5221F] font-bold text-xs">
+                  <VideoOff className="w-4 h-4" />
+                  <span>{cameraError}</span>
+                </div>
+                <p className="text-[11px] text-[#5E6266]">
+                  Browser sandboxes or iframes can sometimes restrict direct WebRTC streams. You can use your device's native camera shutter or upload an image instead.
+                </p>
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                  <button
+                    onClick={() => nativeCameraInputRef.current?.click()}
+                    className="px-3.5 py-2 rounded-lg bg-[#006C4C] hover:bg-[#00573D] text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all"
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                    Open Native Camera
+                  </button>
+                  <button
+                    onClick={() => startCamera()}
+                    className="px-3 py-2 rounded-lg bg-white border border-[#E1E3E1] text-[#1A1C1E] font-semibold text-xs hover:bg-[#F1F3F4] transition-colors"
+                  >
+                    Retry Viewfinder
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveTab('upload');
+                      fileInputRef.current?.click();
+                    }}
+                    className="px-3 py-2 rounded-lg bg-white border border-[#E1E3E1] text-[#1A1C1E] font-semibold text-xs hover:bg-[#F1F3F4] transition-colors"
+                  >
+                    Browse Files
+                  </button>
+                </div>
+              </div>
             ) : (
-              <div className="py-6 text-center">
-                <button
-                  onClick={startCamera}
-                  className="px-4 py-2.5 rounded-lg bg-[#006C4C] hover:bg-[#00573D] text-white font-bold text-xs shadow-lg flex items-center gap-2"
-                >
-                  <Camera className="w-4 h-4" />
-                  Launch Camera Viewfinder
-                </button>
+              <div className="py-8 px-4 text-center max-w-md w-full space-y-4">
+                <div className="w-14 h-14 rounded-full bg-[#E7F3EF] flex items-center justify-center text-[#006C4C] mx-auto shadow-sm">
+                  <Camera className="w-7 h-7" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-[#1A1C1E]">
+                    Capture Real-Time Meal Photo
+                  </h4>
+                  <p className="text-xs text-[#5E6266] mt-1">
+                    Choose between a live browser viewfinder or opening your phone/device native camera shutter.
+                  </p>
+                </div>
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-1">
+                  <button
+                    onClick={() => startCamera()}
+                    className="w-full sm:w-auto px-4 py-2.5 rounded-lg bg-[#006C4C] hover:bg-[#00573D] text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer"
+                  >
+                    <Camera className="w-4 h-4" />
+                    Launch Live Viewfinder
+                  </button>
+                  <button
+                    onClick={() => nativeCameraInputRef.current?.click()}
+                    className="w-full sm:w-auto px-4 py-2.5 rounded-lg bg-white border border-[#E1E3E1] hover:bg-[#F1F3F4] text-[#1A1C1E] font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer"
+                  >
+                    <Smartphone className="w-4 h-4 text-[#006C4C]" />
+                    Device Camera Shutter
+                  </button>
+                </div>
               </div>
             )}
           </div>
