@@ -197,26 +197,91 @@ export const VisionMealAnalyzer: React.FC<VisionMealAnalyzerProps> = ({
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Helper to compress and downscale high-resolution mobile photos (e.g. 12MP-48MP iPhone camera shots) to clean 1200px JPEGs (~200KB)
+  const processAndCompressImage = (fileOrDataUrl: File | string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX_DIM = 1200;
+        let { width, height } = img;
+        if (width > MAX_DIM || height > MAX_DIM) {
+          if (width > height) {
+            height = Math.round((height * MAX_DIM) / width);
+            width = MAX_DIM;
+          } else {
+            width = Math.round((width * MAX_DIM) / height);
+            height = MAX_DIM;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(typeof fileOrDataUrl === 'string' ? fileOrDataUrl : '');
+          return;
+        }
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.85);
+        resolve(compressedBase64);
+      };
+      img.onerror = (err) => {
+        console.warn('Image loading for compression failed, using original input:', err);
+        if (typeof fileOrDataUrl === 'string') {
+          resolve(fileOrDataUrl);
+        } else {
+          reject(err);
+        }
+      };
+
+      if (typeof fileOrDataUrl === 'string') {
+        img.src = fileOrDataUrl;
+      } else {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          img.src = e.target?.result as string;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(fileOrDataUrl);
+      }
+    });
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const base64 = event.target?.result as string;
-      setImagePreview(base64);
+    try {
+      const compressed = await processAndCompressImage(file);
+      setImagePreview(compressed);
       setAnalysisResult(null);
       setAnalysisError(null);
-    };
-    reader.readAsDataURL(file);
+    } catch (err: any) {
+      console.error('File reading error:', err);
+      // Fallback to standard reader
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const base64 = event.target?.result as string;
+        setImagePreview(base64);
+        setAnalysisResult(null);
+        setAnalysisError(null);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
-  const handleSelectSample = (sample: SamplePresetMeal) => {
-    setImagePreview(sample.imageUrl);
-    setSelectedSlotHint(sample.slotName);
-    setAnalysisResult(sample.expectedData);
-    setRawJsonOutput(JSON.stringify(sample.expectedData, null, 2));
-    setAnalysisError(null);
+  const handleSelectSample = async (sample: SamplePresetMeal) => {
+    try {
+      setImagePreview(sample.imageUrl);
+      setSelectedSlotHint(sample.slotName);
+      setAnalysisResult(sample.expectedData);
+      setRawJsonOutput(JSON.stringify(sample.expectedData, null, 2));
+      setAnalysisError(null);
+    } catch (err) {
+      console.error('Error selecting preset:', err);
+    }
   };
 
   // Trigger Vision Analysis with Gemini API endpoint
@@ -230,22 +295,22 @@ export const VisionMealAnalyzer: React.FC<VisionMealAnalyzerProps> = ({
     setAnalysisError(null);
 
     try {
-      // If sample image is a remote URL, convert to base64 or pass data
+      // Ensure image is compressed & normalized to standard JPEG base64 payload
       let base64Payload = imagePreview;
       if (imagePreview.startsWith('http')) {
         // Fetch remote image and convert to base64
         try {
           const imgRes = await fetch(imagePreview);
           const blob = await imgRes.blob();
-          const convertedBase64 = await new Promise<string>((resolve, reject) => {
-            const r = new FileReader();
-            r.onload = () => resolve(r.result as string);
-            r.onerror = reject;
-            r.readAsDataURL(blob);
-          });
-          base64Payload = convertedBase64;
+          base64Payload = await processAndCompressImage(blob as any);
         } catch (fetchErr) {
           console.warn('Could not fetch image directly, will send URL or fallback payload:', fetchErr);
+        }
+      } else if (imagePreview.startsWith('data:image')) {
+        try {
+          base64Payload = await processAndCompressImage(imagePreview);
+        } catch (compErr) {
+          console.warn('Compression step skipped:', compErr);
         }
       }
 
@@ -261,7 +326,16 @@ export const VisionMealAnalyzer: React.FC<VisionMealAnalyzerProps> = ({
         }),
       });
 
-      const data = await response.json();
+      const responseText = await response.text();
+      let data: any;
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseErr) {
+        if (response.status === 413) {
+          throw new Error('Image is too large. Please take a closer photo or select a smaller image file.');
+        }
+        throw new Error('Server returned an unexpected response. Please try scanning again.');
+      }
 
       if (!response.ok || !data.success) {
         throw new Error(data.error || 'Failed to analyze meal image.');

@@ -108,7 +108,7 @@ app.post('/api/analyze-meal', async (req, res) => {
 
     // Clean base64 data if it contains a data URL prefix
     let cleanBase64 = imageBase64;
-    let actualMime = mimeType;
+    let actualMime = mimeType || 'image/jpeg';
     if (imageBase64.includes(';base64,')) {
       const parts = imageBase64.split(';base64,');
       cleanBase64 = parts[1];
@@ -116,6 +116,14 @@ app.post('/api/analyze-meal', async (req, res) => {
       if (match && match[1]) {
         actualMime = match[1];
       }
+    }
+
+    // Strip any trailing whitespace, linebreaks, or non-base64 artifacts
+    cleanBase64 = cleanBase64.replace(/\s+/g, '');
+
+    // Normalize mimeType for Gemini Vision API compatibility
+    if (!['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(actualMime.toLowerCase())) {
+      actualMime = 'image/jpeg';
     }
 
     const ai = getGenAI();
