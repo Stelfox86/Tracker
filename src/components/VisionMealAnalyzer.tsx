@@ -862,6 +862,7 @@ export const VisionMealAnalyzer: React.FC<VisionMealAnalyzerProps> = ({
                     className="w-full bg-white border border-[#E1E3E1] rounded-lg px-3 py-2 text-xs text-[#1A1C1E] font-medium focus:outline-none focus:border-[#006C4C]"
                   >
                     <option value="auto">Auto-detect Closest Protocol Slot (AI)</option>
+                    <option value="Snack / Protein Shake (Extra Fuel)">🥤 Snack / Protein Shake (Extra Fuel)</option>
                     {PROTOCOL_MEAL_SLOTS.map((s) => (
                       <option key={s.id} value={s.name}>
                         Slot {s.slotNumber}: {s.name} ({s.calories} kcal)

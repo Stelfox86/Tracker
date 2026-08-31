@@ -173,6 +173,146 @@ export interface SamplePresetMeal {
   expectedData: MealAnalysisResult;
 }
 
+export interface SnackPreset {
+  id: string;
+  name: string;
+  category: 'shake' | 'bar' | 'food' | 'drink';
+  calories: number;
+  protein_g: number;
+  carbs_g: number;
+  fat_g: number;
+  portion: string;
+  description: string;
+  iconType: 'shake' | 'milk' | 'bar' | 'fruit' | 'meat' | 'egg' | 'cup' | 'sparkles';
+  highlight?: boolean;
+}
+
+export const PROTOCOL_SNACK_PRESETS: SnackPreset[] = [
+  {
+    id: 'snack-whey-double',
+    name: 'Double Scoop Whey Isolate Shake',
+    category: 'shake',
+    calories: 240,
+    protein_g: 50,
+    carbs_g: 4,
+    fat_g: 2,
+    portion: '2 scoops (60g) in 400ml water',
+    description: 'Ultra-pure fast-absorbing protein synthesis booster, ideal mid-shift or post-training.',
+    iconType: 'shake',
+    highlight: true,
+  },
+  {
+    id: 'snack-whey-milk',
+    name: 'Whey Protein + Semi-Skimmed Milk',
+    category: 'shake',
+    calories: 255,
+    protein_g: 34,
+    carbs_g: 15,
+    fat_g: 6,
+    portion: '1 scoop (30g) + 250ml milk',
+    description: 'Creamier shake delivering both fast whey and slow casein proteins.',
+    iconType: 'milk',
+  },
+  {
+    id: 'snack-clear-whey',
+    name: 'Clear Whey Protein Isolate Drink',
+    category: 'drink',
+    calories: 90,
+    protein_g: 20,
+    carbs_g: 1,
+    fat_g: 0.2,
+    portion: '1 scoop (25g) in 500ml ice water',
+    description: 'Refreshing fruity hydration with zero fat and instant amino acid delivery.',
+    iconType: 'sparkles',
+    highlight: true,
+  },
+  {
+    id: 'snack-casein-bedtime',
+    name: 'Micellar Casein Night Shake',
+    category: 'shake',
+    calories: 220,
+    protein_g: 44,
+    carbs_g: 3,
+    fat_g: 2,
+    portion: '1.5 scoops (50g) in water/milk',
+    description: 'Slow 7-hour amino release to protect muscle tissue during 03:00 wake-up recovery.',
+    iconType: 'shake',
+  },
+  {
+    id: 'snack-protein-bar',
+    name: 'High-Protein Bar (e.g. Grenade / Barebells)',
+    category: 'bar',
+    calories: 215,
+    protein_g: 20,
+    carbs_g: 18,
+    fat_g: 8,
+    portion: '1 bar (60g)',
+    description: 'Convenient pocket-friendly shift fuel with low active sugar and high satiety.',
+    iconType: 'bar',
+    highlight: true,
+  },
+  {
+    id: 'snack-greek-yogurt-bowl',
+    name: '0% Greek Yogurt + Scoop Whey & Berries',
+    category: 'food',
+    calories: 285,
+    protein_g: 45,
+    carbs_g: 20,
+    fat_g: 2,
+    portion: '200g yogurt + 25g whey + 50g berries',
+    description: 'High-density creamy protein bowl packed with antioxidants and probiotics.',
+    iconType: 'cup',
+  },
+  {
+    id: 'snack-beef-biltong',
+    name: 'Lean Beef Biltong / Jerky',
+    category: 'food',
+    calories: 140,
+    protein_g: 26,
+    carbs_g: 2,
+    fat_g: 2.5,
+    portion: '1 bag (50g)',
+    description: 'Pure savory lean protein, iron, and zinc without needing refrigeration.',
+    iconType: 'meat',
+  },
+  {
+    id: 'snack-boiled-eggs',
+    name: 'Hard-Boiled Eggs (2 Large)',
+    category: 'food',
+    calories: 148,
+    protein_g: 13,
+    carbs_g: 1,
+    fat_g: 10,
+    portion: '2 whole eggs',
+    description: 'Choline, complete amino profile, and healthy fats for cognitive shift focus.',
+    iconType: 'egg',
+  },
+  {
+    id: 'snack-rice-cakes-pb',
+    name: 'Rice Cakes (3x) + Peanut Butter',
+    category: 'food',
+    calories: 290,
+    protein_g: 10,
+    carbs_g: 32,
+    fat_g: 14,
+    portion: '3 cakes + 25g peanut butter',
+    description: 'Fast energetic crunch providing glycogen top-ups before physical exertion.',
+    iconType: 'fruit',
+  },
+  {
+    id: 'snack-bcaa-eaas',
+    name: 'EAA / BCAA + Electrolyte Hydration',
+    category: 'drink',
+    calories: 30,
+    protein_g: 7,
+    carbs_g: 1,
+    fat_g: 0,
+    portion: '1 scoop in 750ml water',
+    description: 'Intra-shift electrolyte balance and anti-catabolic leucine trigger.',
+    iconType: 'sparkles',
+  },
+];
+
 export interface ReminderSettings {
   enabled: boolean;
   advanceMinutes: number; // e.g. 30, 15, 45, 0

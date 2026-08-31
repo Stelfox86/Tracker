@@ -45,6 +45,7 @@ const PROTOCOL_SLOTS_MAP: Record<string, { calories: number; protein_g: number; 
   'Afternoon Work Fuel (16:00)': { calories: 450, protein_g: 15, carbs_g: 58, fat_g: 18 },
   'Post-Work Dinner (20:15)': { calories: 600, protein_g: 46, carbs_g: 60, fat_g: 12 },
   'Pre-Bed Recovery (21:30)': { calories: 340, protein_g: 38, carbs_g: 10, fat_g: 14 },
+  'Snack / Protein Shake (Extra Fuel)': { calories: 250, protein_g: 35, carbs_g: 15, fat_g: 5 },
 };
 
 const SYSTEM_PROMPT = `You are an expert nutrition vision API and meal-tracking engine. Your task is to analyze user-uploaded meal images, estimate ingredients and portion weights, calculate accurate macronutrients, and compare them against the user's specific 4-Day Shift & Early Lift Nutrition Protocol.

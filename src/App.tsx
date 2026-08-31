@@ -27,12 +27,17 @@ import {
   NextMealBanner
 } from './components/NextMealBanner';
 import {
+  SnacksSection
+} from './components/SnacksSection';
+import {
   LoggedMealRecord,
   MealSlotBaseline,
   MealAnalysisResult,
   ReminderSettings,
   DEFAULT_REMINDER_SETTINGS,
-  PROTOCOL_MEAL_SLOTS
+  PROTOCOL_MEAL_SLOTS,
+  SnackPreset,
+  PROTOCOL_SNACK_PRESETS
 } from './types';
 import {
   sendSystemNotification,
@@ -211,11 +216,33 @@ export default function App() {
     setIsAnalyzerOpen(true);
   };
 
+  const handleScanSnackWithVision = () => {
+    setSelectedSlotForScan({
+      id: `snack-slot-${Date.now()}`,
+      slotNumber: 8,
+      name: 'Snack / Protein Shake (Extra Fuel)',
+      time: 'Flexible',
+      calories: 250,
+      protein_g: 35,
+      carbs_g: 15,
+      fat_g: 5,
+      suggestedFoods: 'Whey Isolate, Clear Whey, Greek Yogurt, Protein Bar',
+      description: 'Flexible intra-shift or post-training extra protein booster',
+      category: 'snack',
+    });
+    setIsAnalyzerOpen(true);
+  };
+
   const handleSaveMealFromAnalyzer = (
     analysis: MealAnalysisResult,
     imageThumbnail?: string,
     notes?: string
   ) => {
+    const isSnack =
+      analysis.matched_slot?.toLowerCase().includes('snack') ||
+      analysis.matched_slot?.toLowerCase().includes('shake') ||
+      analysis.matched_slot === 'Snack / Protein Shake (Extra Fuel)';
+
     const targetSlot =
       PROTOCOL_MEAL_SLOTS.find((s) => s.name === analysis.matched_slot) ||
       selectedSlotForScan ||
@@ -225,26 +252,117 @@ export default function App() {
       id: `meal-${Date.now()}`,
       timestamp: new Date().toISOString(),
       shiftDay,
-      slotId: targetSlot.id,
+      slotId: isSnack ? `snack-${Date.now()}` : targetSlot.id,
       slotName: analysis.matched_slot || targetSlot.name,
       mealAnalysis: analysis,
       imageThumbnail,
       notes,
     };
 
-    // Filter out existing meal in this slot if any, and replace with newly analyzed meal
-    const filtered = loggedMeals.filter(
-      (m) => m.slotName !== newRecord.slotName && m.slotId !== newRecord.slotId
-    );
-    const updated = [...filtered, newRecord].sort((a, b) => {
-      const slotA = PROTOCOL_MEAL_SLOTS.find((s) => s.name === a.slotName)?.slotNumber || 0;
-      const slotB = PROTOCOL_MEAL_SLOTS.find((s) => s.name === b.slotName)?.slotNumber || 0;
-      return slotA - slotB;
-    });
+    let updated: LoggedMealRecord[];
+    if (isSnack) {
+      // Append snack to list so multiple snacks can be logged
+      updated = [...loggedMeals, newRecord];
+    } else {
+      // Replace existing meal for this specific protocol slot
+      const filtered = loggedMeals.filter(
+        (m) => m.slotName !== newRecord.slotName && m.slotId !== newRecord.slotId
+      );
+      updated = [...filtered, newRecord].sort((a, b) => {
+        const slotA = PROTOCOL_MEAL_SLOTS.find((s) => s.name === a.slotName)?.slotNumber || 99;
+        const slotB = PROTOCOL_MEAL_SLOTS.find((s) => s.name === b.slotName)?.slotNumber || 99;
+        return slotA - slotB;
+      });
+    }
 
     saveMealsToStorage(updated);
     setIsAnalyzerOpen(false);
     setSelectedSlotForScan(null);
+  };
+
+  const handleLogSnackPreset = (preset: SnackPreset) => {
+    const newSnackRecord: LoggedMealRecord = {
+      id: `snack-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      shiftDay,
+      slotId: `snack-${preset.id}-${Date.now()}`,
+      slotName: `Snack: ${preset.name}`,
+      mealAnalysis: {
+        meal_name: preset.name,
+        matched_slot: 'Snack / Protein Shake (Extra Fuel)',
+        ingredients: [
+          {
+            name: preset.name,
+            estimated_weight_g: 100,
+            calories: preset.calories,
+            protein_g: preset.protein_g,
+            carbs_g: preset.carbs_g,
+            fat_g: preset.fat_g,
+          },
+        ],
+        meal_totals: {
+          calories: preset.calories,
+          protein_g: preset.protein_g,
+          carbs_g: preset.carbs_g,
+          fat_g: preset.fat_g,
+        },
+        slot_variance: {
+          calorie_difference: preset.calories,
+          protein_difference_g: preset.protein_g,
+          carbs_difference_g: preset.carbs_g,
+          fat_difference_g: preset.fat_g,
+        },
+      },
+      notes: `${preset.portion} • ${preset.description}`,
+    };
+
+    saveMealsToStorage([...loggedMeals, newSnackRecord]);
+  };
+
+  const handleLogCustomSnack = (custom: {
+    name: string;
+    calories: number;
+    protein_g: number;
+    carbs_g: number;
+    fat_g: number;
+    notes?: string;
+  }) => {
+    const newSnackRecord: LoggedMealRecord = {
+      id: `snack-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      shiftDay,
+      slotId: `snack-custom-${Date.now()}`,
+      slotName: `Snack: ${custom.name}`,
+      mealAnalysis: {
+        meal_name: custom.name,
+        matched_slot: 'Snack / Protein Shake (Extra Fuel)',
+        ingredients: [
+          {
+            name: custom.name,
+            estimated_weight_g: 100,
+            calories: custom.calories,
+            protein_g: custom.protein_g,
+            carbs_g: custom.carbs_g,
+            fat_g: custom.fat_g,
+          },
+        ],
+        meal_totals: {
+          calories: custom.calories,
+          protein_g: custom.protein_g,
+          carbs_g: custom.carbs_g,
+          fat_g: custom.fat_g,
+        },
+        slot_variance: {
+          calorie_difference: custom.calories,
+          protein_difference_g: custom.protein_g,
+          carbs_difference_g: custom.carbs_g,
+          fat_difference_g: custom.fat_g,
+        },
+      },
+      notes: custom.notes,
+    };
+
+    saveMealsToStorage([...loggedMeals, newSnackRecord]);
   };
 
   const handleDeleteMeal = (mealId: string) => {
@@ -362,6 +480,17 @@ export default function App() {
           onViewMealDetails={(meal) => setInspectingMeal(meal)}
           onDeleteMeal={handleDeleteMeal}
           onQuickLoadBaseline={handleQuickLoadBaseline}
+        />
+
+        {/* Dedicated Protein Drinks & Mid-Shift Snacks Section */}
+        <SnacksSection
+          loggedMeals={loggedMeals}
+          shiftDay={shiftDay}
+          onLogSnackPreset={handleLogSnackPreset}
+          onLogCustomSnack={handleLogCustomSnack}
+          onDeleteMeal={handleDeleteMeal}
+          onScanSnackWithVision={handleScanSnackWithVision}
+          onViewMealDetails={(meal) => setInspectingMeal(meal)}
         />
 
       </main>

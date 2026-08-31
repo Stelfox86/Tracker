@@ -38,14 +38,16 @@ export const DailyTargetsDashboard: React.FC<DailyTargetsDashboardProps> = ({
   const fatRemaining = Math.max(0, Math.round((targets.fat_g - totals.fat_g) * 10) / 10);
 
   // Status computation
+  const primarySlotsLoggedCount = loggedMeals.filter((m) => !m.slotId.startsWith('snack-')).length;
+  const snacksLoggedCount = loggedMeals.filter((m) => m.slotId.startsWith('snack-') || m.slotName.toLowerCase().includes('snack') || m.slotName.toLowerCase().includes('shake')).length;
   const isCalorieSurplus = totals.calories > targets.calories;
-  const isComplete = loggedMeals.length >= 7 && totals.calories >= targets.calories * 0.95;
+  const isComplete = primarySlotsLoggedCount >= 7 && totals.calories >= targets.calories * 0.95;
 
   return (
     <section className="bg-white rounded-xl border border-[#E1E3E1] p-5 sm:p-6 shadow-sm">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-5 border-b border-[#E1E3E1] gap-3">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-lg font-bold text-[#1A1C1E]">
               Shift Day {shiftDay} Protocol Targets
             </h2>
@@ -55,7 +57,12 @@ export const DailyTargetsDashboard: React.FC<DailyTargetsDashboardProps> = ({
               </span>
             ) : (
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-[#F1F3F4] text-[#5E6266] border border-[#E1E3E1]">
-                {loggedMeals.length} of 7 Slots Logged
+                {primarySlotsLoggedCount} of 7 Schedule Slots
+              </span>
+            )}
+            {snacksLoggedCount > 0 && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-[#E7F3EF] text-[#006C4C] border border-[#006C4C]/20">
+                +{snacksLoggedCount} {snacksLoggedCount === 1 ? 'Snack/Shake' : 'Snacks/Shakes'}
               </span>
             )}
           </div>
