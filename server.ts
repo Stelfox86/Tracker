@@ -340,6 +340,17 @@ app.post('/api/analyze-meal', async (req, res) => {
   }
 });
 
+// Helper to test if string is strictly valid Base64
+function isValidBase64String(str: string): boolean {
+  if (!str || typeof str !== 'string') return false;
+  if (str.length < 50) return false;
+  // Strip padding and whitespace for check
+  const clean = str.trim();
+  // Valid base64 chars regex
+  const base64Regex = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+  return base64Regex.test(clean);
+}
+
 // Helper to resolve and normalize image data (supports base64, data URLs, and remote HTTP/HTTPS URLs)
 async function resolveImageBase64(input: string, defaultMime: string = 'image/jpeg'): Promise<{ base64: string; mimeType: string } | null> {
   if (!input || typeof input !== 'string') return null;
@@ -347,7 +358,12 @@ async function resolveImageBase64(input: string, defaultMime: string = 'image/jp
   // Handle remote URL
   if (input.startsWith('http://') || input.startsWith('https://')) {
     try {
-      const resp = await fetch(input);
+      const resp = await fetch(input, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        },
+      });
       if (resp.ok) {
         const arrayBuf = await resp.arrayBuffer();
         const base64 = Buffer.from(arrayBuf).toString('base64');
@@ -358,25 +374,34 @@ async function resolveImageBase64(input: string, defaultMime: string = 'image/jp
         return { base64, mimeType };
       }
     } catch (err) {
-      console.warn('Could not fetch remote image URL, will process as fallback:', err);
+      console.warn('Could not fetch remote image URL:', err);
     }
+    // If remote URL failed to fetch, do NOT treat the URL string as base64!
+    return null;
   }
 
   // Handle Data URI or raw base64 string
   let mimeType = defaultMime || 'image/jpeg';
-  let base64 = input;
+  let rawStr = input;
   if (input.includes(';base64,')) {
     const parts = input.split(';base64,');
-    base64 = parts[1] || '';
+    rawStr = parts[1] || '';
     const match = parts[0].match(/data:(.*?)$/);
-    if (match && match[1]) mimeType = match[1];
+    if (match && match[1]) mimeType = match[1].trim();
   }
-  base64 = base64.replace(/\s+/g, '');
+
+  // Sanitize base64 string: remove all newlines, spaces, and non-base64 characters
+  const cleanBase64 = rawStr.replace(/[^A-Za-z0-9+/=]/g, '');
+
   if (!['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(mimeType.toLowerCase())) {
     mimeType = 'image/jpeg';
   }
 
-  return { base64, mimeType };
+  if (isValidBase64String(cleanBase64)) {
+    return { base64: cleanBase64, mimeType };
+  }
+
+  return null;
 }
 
 // ==========================================

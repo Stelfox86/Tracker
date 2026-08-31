@@ -272,14 +272,11 @@ export const GymProgressTracker: React.FC<GymProgressTrackerProps> = ({
         throw new Error(json.error || 'Failed to analyze physique with AI');
       }
 
+      setAnalysisError(null);
       return json.data as PhysiqueAnalysisResult;
     } catch (err: any) {
       console.error('Error running AI physique analysis:', err);
-      // Clean up technical regex/DOM exception messages for a friendly user experience
-      let userFriendlyMsg = err?.message || 'An error occurred during AI analysis. Please try again.';
-      if (userFriendlyMsg.includes('The string did not match') || userFriendlyMsg.includes('pattern')) {
-        userFriendlyMsg = 'Could not process the photo format. Please try re-selecting your photo or running again.';
-      }
+      const userFriendlyMsg = err?.message || 'An error occurred during AI analysis. Please try again.';
       setAnalysisError(userFriendlyMsg);
       return null;
     } finally {
