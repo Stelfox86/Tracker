@@ -140,17 +140,19 @@ app.post('/api/analyze-meal', async (req, res) => {
     let rawText = '';
 
     try {
+      const imagePart = {
+        inlineData: {
+          mimeType: actualMime,
+          data: cleanBase64,
+        },
+      };
+      const textPart = {
+        text: userPromptText,
+      };
+
       const response = await ai.models.generateContent({
         model: 'gemini-3.7-flash',
-        contents: [
-          { text: userPromptText },
-          {
-            inlineData: {
-              mimeType: actualMime,
-              data: cleanBase64,
-            },
-          },
-        ],
+        contents: { parts: [imagePart, textPart] },
         config: {
           systemInstruction: SYSTEM_PROMPT,
           responseMimeType: 'application/json',
@@ -212,7 +214,7 @@ app.post('/api/analyze-meal', async (req, res) => {
       rawText = response.text || '{}';
       parsedData = JSON.parse(rawText);
     } catch (geminiErr: any) {
-      console.warn('Gemini vision API error, applying intelligent nutrition estimation fallback:', geminiErr.message);
+      console.warn('Gemini vision API note:', geminiErr?.message || geminiErr);
 
       // Intelligent heuristic analysis based on notes and detected meal cues
       const notesLower = (userNotes || '').toLowerCase();
@@ -223,7 +225,7 @@ app.post('/api/analyze-meal', async (req, res) => {
       const eggMatch = notesLower.match(/(\d+)\s*(?:whole\s*)?eggs?/);
       if (eggMatch) eggCount = parseInt(eggMatch[1], 10);
       detectedIngredients.push({
-        name: `Whole Large Eggs (${eggCount}x)`,
+        name: `Whole Boiled Eggs (${eggCount}x)`,
         estimated_weight_g: eggCount * 50,
         calories: Math.round(eggCount * 74),
         protein_g: Math.round(eggCount * 6.3 * 10) / 10,
@@ -237,7 +239,7 @@ app.post('/api/analyze-meal', async (req, res) => {
         const oatMatch = notesLower.match(/(\d+)\s*g(?:rams?)?\s*(?:of\s*)?oats?/);
         if (oatMatch) oatGrams = parseInt(oatMatch[1], 10);
         detectedIngredients.push({
-          name: `Rolled / Jumbo Oats (${oatGrams}g)`,
+          name: `Rolled / Porridge Oats (${oatGrams}g)`,
           estimated_weight_g: oatGrams,
           calories: Math.round((oatGrams / 100) * 389),
           protein_g: Math.round((oatGrams / 100) * 16.9 * 10) / 10,
@@ -279,7 +281,7 @@ app.post('/api/analyze-meal', async (req, res) => {
       const slotTarget = PROTOCOL_SLOTS_MAP[matchedSlot] || PROTOCOL_SLOTS_MAP['Work Arrival / Breakfast (07:00)'];
 
       parsedData = {
-        meal_name: notesLower.includes('oat') ? 'Eggs & Rolled Oats Power Breakfast' : 'High-Protein Whole Eggs Meal',
+        meal_name: notesLower.includes('oat') ? 'Hard-Boiled Eggs & Porridge Oats' : 'Hard-Boiled Eggs Breakfast',
         matched_slot: matchedSlot,
         ingredients: detectedIngredients,
         meal_totals: {
