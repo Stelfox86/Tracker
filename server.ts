@@ -340,6 +340,45 @@ app.post('/api/analyze-meal', async (req, res) => {
   }
 });
 
+// Helper to resolve and normalize image data (supports base64, data URLs, and remote HTTP/HTTPS URLs)
+async function resolveImageBase64(input: string, defaultMime: string = 'image/jpeg'): Promise<{ base64: string; mimeType: string } | null> {
+  if (!input || typeof input !== 'string') return null;
+
+  // Handle remote URL
+  if (input.startsWith('http://') || input.startsWith('https://')) {
+    try {
+      const resp = await fetch(input);
+      if (resp.ok) {
+        const arrayBuf = await resp.arrayBuffer();
+        const base64 = Buffer.from(arrayBuf).toString('base64');
+        let mimeType = resp.headers.get('content-type') || defaultMime;
+        if (!['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(mimeType.toLowerCase())) {
+          mimeType = 'image/jpeg';
+        }
+        return { base64, mimeType };
+      }
+    } catch (err) {
+      console.warn('Could not fetch remote image URL, will process as fallback:', err);
+    }
+  }
+
+  // Handle Data URI or raw base64 string
+  let mimeType = defaultMime || 'image/jpeg';
+  let base64 = input;
+  if (input.includes(';base64,')) {
+    const parts = input.split(';base64,');
+    base64 = parts[1] || '';
+    const match = parts[0].match(/data:(.*?)$/);
+    if (match && match[1]) mimeType = match[1];
+  }
+  base64 = base64.replace(/\s+/g, '');
+  if (!['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(mimeType.toLowerCase())) {
+    mimeType = 'image/jpeg';
+  }
+
+  return { base64, mimeType };
+}
+
 // ==========================================
 // GYM PHYSIQUE PROGRESS & COMPARISON ROUTE
 // ==========================================
@@ -374,153 +413,143 @@ app.post('/api/analyze-physique', async (req, res) => {
       });
     }
 
-    // Helper to clean base64
-    const cleanImg = (base64: string, defaultMime: string) => {
-      let clean = base64;
-      let mime = defaultMime || 'image/jpeg';
-      if (base64.includes(';base64,')) {
-        const parts = base64.split(';base64,');
-        clean = parts[1];
-        const match = parts[0].match(/data:(.*?)$/);
-        if (match && match[1]) mime = match[1];
-      }
-      clean = clean.replace(/\s+/g, '');
-      if (!['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(mime.toLowerCase())) {
-        mime = 'image/jpeg';
-      }
-      return { clean, mime };
-    };
-
-    const cur = cleanImg(currentImageBase64, currentMimeType);
+    const cur = await resolveImageBase64(currentImageBase64, currentMimeType);
     const hasPrevious = !!previousImageBase64;
-    const prev = hasPrevious ? cleanImg(previousImageBase64!, previousMimeType) : null;
-
-    const ai = getGenAI();
-
-    let promptText = `Analyze this current gym/physique photo (Pose: ${pose}). User bodyweight: ${currentWeightKg ? `${currentWeightKg} kg` : 'Not specified'}.`;
-    if (hasPrevious) {
-      promptText += ` Compare it directly to the attached PREVIOUS physique photo from ${daysBetween} days ago (Previous weight: ${previousWeightKg ? `${previousWeightKg} kg` : 'Not specified'}). Determine visual changes: did they gain muscle mass, lose fat, or recomposition? Inspect delts, chest, arms, core, and vascularity. User notes: "${userNotes || 'None'}".`;
-    } else {
-      promptText += ` This is an initial baseline physique calibration photo for the 3,400 kcal & 230g protein Shift-Worker Protocol. User notes: "${userNotes || 'None'}".`;
-    }
-
-    const contentsParts: any[] = [];
-    if (prev) {
-      contentsParts.push({
-        inlineData: {
-          mimeType: prev.mime,
-          data: prev.clean,
-        },
-      });
-    }
-    contentsParts.push({
-      inlineData: {
-        mimeType: cur.mime,
-        data: cur.clean,
-      },
-    });
-    contentsParts.push({
-      text: promptText,
-    });
+    const prev = hasPrevious ? await resolveImageBase64(previousImageBase64!, previousMimeType) : null;
 
     let parsedResult: any = null;
 
     try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.7-flash',
-        contents: { parts: contentsParts },
-        config: {
-          systemInstruction: PHYSIQUE_SYSTEM_PROMPT,
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              status: {
-                type: Type.STRING,
-                description: 'One of: "gained_muscle", "lost_fat_leaner", "recomposition", "maintenance", "initial_baseline"',
-              },
-              statusLabel: {
-                type: Type.STRING,
-                description: 'Short punchy title summarizing the transformation or baseline, e.g. "Lean Hypertrophy & Shoulder Development"',
-              },
-              confidenceScore: {
-                type: Type.NUMBER,
-                description: 'Confidence rating between 75 and 99',
-              },
-              estimatedBodyFat: {
-                type: Type.STRING,
-                description: 'Estimated current body fat percentage, e.g. "13.8%"',
-              },
-              estimatedBodyFatDelta: {
-                type: Type.STRING,
-                description: 'Change in body fat vs previous photo, e.g. "-1.1% reduction" or "Baseline Reference"',
-              },
-              estimatedLeanMassChange: {
-                type: Type.STRING,
-                description: 'Estimated lean mass change, e.g. "+0.6 kg lean mass" or "Baseline calibration"',
-              },
-              visualMetrics: {
-                type: Type.OBJECT,
-                properties: {
-                  definitionScore: { type: Type.NUMBER, description: '1-100 score of muscular definition and leanness' },
-                  fullnessScore: { type: Type.NUMBER, description: '1-100 score of muscle belly volume and glycogen storage' },
-                  symmetryScore: { type: Type.NUMBER, description: '1-100 score of aesthetic balance and symmetry' },
-                  vascularityScore: { type: Type.NUMBER, description: '1-100 score of superficial vascular network visibility' },
-                  deltaScore: { type: Type.NUMBER, description: 'Change score (+1 to +30 for progress, 0 for baseline)' },
-                },
-                required: ['definitionScore', 'fullnessScore', 'symmetryScore', 'vascularityScore', 'deltaScore'],
-              },
-              muscleGroups: {
-                type: Type.OBJECT,
-                properties: {
-                  chestShoulders: { type: Type.STRING, description: 'Specific observations on clavicular chest, sternal line, and deltoid caps' },
-                  arms: { type: Type.STRING, description: 'Specific observations on biceps peak, triceps lateral head, and forearms' },
-                  coreAbs: { type: Type.STRING, description: 'Specific observations on rectus abdominis, linea alba, and obliques' },
-                  backVascularity: { type: Type.STRING, description: 'Observations on V-taper lat width, spinal erectors, or vascularity' },
-                  legsQuads: { type: Type.STRING, description: 'Observations on quad sweep or leg balance if visible' },
-                },
-                required: ['chestShoulders', 'arms', 'coreAbs', 'backVascularity', 'legsQuads'],
-              },
-              comparisonSummary: {
-                type: Type.STRING,
-                description: 'Comprehensive 2-paragraph comparative analysis of muscle gain vs fat loss, glycogen fullness from 3,400 kcal, and posture changes',
-              },
-              protocolAdvice: {
-                type: Type.OBJECT,
-                properties: {
-                  nutritionCoaching: { type: Type.STRING, description: 'Nutrition coaching tailored to 3,400 kcal & 230g protein shift schedule' },
-                  trainingCoaching: { type: Type.STRING, description: 'Lifting advice tailored for 04:00 AM workouts' },
-                  sleepShiftRecovery: { type: Type.STRING, description: 'Recovery advice for shift work & 03:00 wake-ups' },
-                  actionItems: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING },
-                    description: '3-4 actionable bullet points for the next 14 days',
-                  },
-                },
-                required: ['nutritionCoaching', 'trainingCoaching', 'sleepShiftRecovery', 'actionItems'],
-              },
-            },
-            required: [
-              'status',
-              'statusLabel',
-              'confidenceScore',
-              'estimatedBodyFat',
-              'estimatedBodyFatDelta',
-              'estimatedLeanMassChange',
-              'visualMetrics',
-              'muscleGroups',
-              'comparisonSummary',
-              'protocolAdvice',
-            ],
+      const ai = getGenAI();
+
+      let promptText = `Analyze this current gym/physique photo (Pose: ${pose}). User bodyweight: ${currentWeightKg ? `${currentWeightKg} kg` : 'Not specified'}.`;
+      if (hasPrevious) {
+        promptText += ` Compare it directly to the attached PREVIOUS physique photo from ${daysBetween} days ago (Previous weight: ${previousWeightKg ? `${previousWeightKg} kg` : 'Not specified'}). Determine visual changes: did they gain muscle mass, lose fat, or recomposition? Inspect delts, chest, arms, core, and vascularity. User notes: "${userNotes || 'None'}".`;
+      } else {
+        promptText += ` This is an initial baseline physique calibration photo for the 3,400 kcal & 230g protein Shift-Worker Protocol. User notes: "${userNotes || 'None'}".`;
+      }
+
+      const contentsParts: any[] = [];
+      if (prev && prev.base64 && prev.base64.length > 50) {
+        contentsParts.push({
+          inlineData: {
+            mimeType: prev.mimeType,
+            data: prev.base64,
           },
-        },
+        });
+      }
+      if (cur && cur.base64 && cur.base64.length > 50) {
+        contentsParts.push({
+          inlineData: {
+            mimeType: cur.mimeType,
+            data: cur.base64,
+          },
+        });
+      }
+      contentsParts.push({
+        text: promptText,
       });
 
-      parsedResult = JSON.parse(response.text || '{}');
+      // Only attempt vision API if we have valid image data
+      if (contentsParts.length > 1) {
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.7-flash',
+          contents: { parts: contentsParts },
+          config: {
+            systemInstruction: PHYSIQUE_SYSTEM_PROMPT,
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                status: {
+                  type: Type.STRING,
+                  description: 'One of: "gained_muscle", "lost_fat_leaner", "recomposition", "maintenance", "initial_baseline"',
+                },
+                statusLabel: {
+                  type: Type.STRING,
+                  description: 'Short punchy title summarizing the transformation or baseline, e.g. "Lean Hypertrophy & Shoulder Development"',
+                },
+                confidenceScore: {
+                  type: Type.NUMBER,
+                  description: 'Confidence rating between 75 and 99',
+                },
+                estimatedBodyFat: {
+                  type: Type.STRING,
+                  description: 'Estimated current body fat percentage, e.g. "13.8%"',
+                },
+                estimatedBodyFatDelta: {
+                  type: Type.STRING,
+                  description: 'Change in body fat vs previous photo, e.g. "-1.1% reduction" or "Baseline Reference"',
+                },
+                estimatedLeanMassChange: {
+                  type: Type.STRING,
+                  description: 'Estimated lean mass change, e.g. "+0.6 kg lean mass" or "Baseline calibration"',
+                },
+                visualMetrics: {
+                  type: Type.OBJECT,
+                  properties: {
+                    definitionScore: { type: Type.NUMBER, description: '1-100 score of muscular definition and leanness' },
+                    fullnessScore: { type: Type.NUMBER, description: '1-100 score of muscle belly volume and glycogen storage' },
+                    symmetryScore: { type: Type.NUMBER, description: '1-100 score of aesthetic balance and symmetry' },
+                    vascularityScore: { type: Type.NUMBER, description: '1-100 score of superficial vascular network visibility' },
+                    deltaScore: { type: Type.NUMBER, description: 'Change score (+1 to +30 for progress, 0 for baseline)' },
+                  },
+                  required: ['definitionScore', 'fullnessScore', 'symmetryScore', 'vascularityScore', 'deltaScore'],
+                },
+                muscleGroups: {
+                  type: Type.OBJECT,
+                  properties: {
+                    chestShoulders: { type: Type.STRING, description: 'Specific observations on clavicular chest, sternal line, and deltoid caps' },
+                    arms: { type: Type.STRING, description: 'Specific observations on biceps peak, triceps lateral head, and forearms' },
+                    coreAbs: { type: Type.STRING, description: 'Specific observations on rectus abdominis, linea alba, and obliques' },
+                    backVascularity: { type: Type.STRING, description: 'Observations on V-taper lat width, spinal erectors, or vascularity' },
+                    legsQuads: { type: Type.STRING, description: 'Observations on quad sweep or leg balance if visible' },
+                  },
+                  required: ['chestShoulders', 'arms', 'coreAbs', 'backVascularity', 'legsQuads'],
+                },
+                comparisonSummary: {
+                  type: Type.STRING,
+                  description: 'Comprehensive 2-paragraph comparative analysis of muscle gain vs fat loss, glycogen fullness from 3,400 kcal, and posture changes',
+                },
+                protocolAdvice: {
+                  type: Type.OBJECT,
+                  properties: {
+                    nutritionCoaching: { type: Type.STRING, description: 'Nutrition coaching tailored to 3,400 kcal & 230g protein shift schedule' },
+                    trainingCoaching: { type: Type.STRING, description: 'Lifting advice tailored for 04:00 AM workouts' },
+                    sleepShiftRecovery: { type: Type.STRING, description: 'Recovery advice for shift work & 03:00 wake-ups' },
+                    actionItems: {
+                      type: Type.ARRAY,
+                      items: { type: Type.STRING },
+                      description: '3-4 actionable bullet points for the next 14 days',
+                    },
+                  },
+                  required: ['nutritionCoaching', 'trainingCoaching', 'sleepShiftRecovery', 'actionItems'],
+                },
+              },
+              required: [
+                'status',
+                'statusLabel',
+                'confidenceScore',
+                'estimatedBodyFat',
+                'estimatedBodyFatDelta',
+                'estimatedLeanMassChange',
+                'visualMetrics',
+                'muscleGroups',
+                'comparisonSummary',
+                'protocolAdvice',
+              ],
+            },
+          },
+        });
+
+        parsedResult = JSON.parse(response.text || '{}');
+      }
     } catch (geminiErr: any) {
       console.warn('Physique AI analysis fallback notice:', geminiErr?.message || geminiErr);
+    }
 
-      // Intelligent athletic fallback analysis
+    // Comprehensive athletic fallback analysis if Gemini response was empty or caught
+    if (!parsedResult || !parsedResult.status) {
       const weightDiff = (currentWeightKg && previousWeightKg) ? Math.round((currentWeightKg - previousWeightKg) * 10) / 10 : 0;
       const isGain = weightDiff >= 0;
 

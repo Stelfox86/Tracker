@@ -129,15 +129,52 @@ export const GymProgressTracker: React.FC<GymProgressTrackerProps> = ({
     if (isDraggingSlider) handleSliderMove(e.clientX);
   };
 
+  // Client-side image compression to handle any phone photo size smoothly
+  const compressImage = (dataUrl: string, maxDim = 1280, quality = 0.85): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } else {
+          resolve(dataUrl);
+        }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    });
+  };
+
   // Image upload handler
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       if (event.target?.result) {
-        setNewImageBase64(event.target.result as string);
+        const rawBase64 = event.target.result as string;
+        try {
+          const compressed = await compressImage(rawBase64);
+          setNewImageBase64(compressed);
+        } catch (err) {
+          setNewImageBase64(rawBase64);
+        }
       }
     };
     reader.readAsDataURL(file);
@@ -151,17 +188,21 @@ export const GymProgressTracker: React.FC<GymProgressTrackerProps> = ({
     prevWeight?: number,
     pose: string = 'front_flexed',
     notes: string = ''
-  ) => {
+  ): Promise<PhysiqueAnalysisResult | null> => {
     setIsAnalyzing(true);
     setAnalysisError(null);
 
     try {
+      // Compress if needed before sending
+      const readyCurImg = curImg.startsWith('data:image') ? await compressImage(curImg) : curImg;
+      const readyPrevImg = prevImg && prevImg.startsWith('data:image') ? await compressImage(prevImg) : prevImg;
+
       const response = await fetch('/api/analyze-physique', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          currentImageBase64: curImg,
-          previousImageBase64: prevImg || undefined,
+          currentImageBase64: readyCurImg,
+          previousImageBase64: readyPrevImg || undefined,
           currentWeightKg: curWeight,
           previousWeightKg: prevWeight,
           pose,
@@ -178,7 +219,7 @@ export const GymProgressTracker: React.FC<GymProgressTrackerProps> = ({
       return json.data as PhysiqueAnalysisResult;
     } catch (err: any) {
       console.error('Error running AI physique analysis:', err);
-      setAnalysisError(err.message || 'An error occurred during AI analysis.');
+      setAnalysisError(err.message || 'An error occurred during AI analysis. Please try again.');
       return null;
     } finally {
       setIsAnalyzing(false);
@@ -572,24 +613,56 @@ export const GymProgressTracker: React.FC<GymProgressTrackerProps> = ({
                   </div>
 
                   {/* Body Fat & Delta Metric Pill */}
-                  <div className="flex items-center gap-3 bg-white/90 px-3.5 py-2 rounded-xl border border-black/10 shadow-2xs self-start sm:self-center">
-                    <div>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-[#5E6266] block">
-                        Estimated Body Fat
-                      </span>
-                      <span className="text-lg font-black font-mono text-[#1A1C1E]">
-                        {activeAnalysis.estimatedBodyFat}
-                      </span>
+                  <div className="flex items-center gap-3 self-start sm:self-center flex-wrap">
+                    <div className="flex items-center gap-3 bg-white/90 px-3.5 py-2 rounded-xl border border-black/10 shadow-2xs">
+                      <div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#5E6266] block">
+                          Estimated Body Fat
+                        </span>
+                        <span className="text-lg font-black font-mono text-[#1A1C1E]">
+                          {activeAnalysis.estimatedBodyFat}
+                        </span>
+                      </div>
+                      <div className="w-px h-8 bg-black/10"></div>
+                      <div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#5E6266] block">
+                          Delta Change
+                        </span>
+                        <span className="text-xs font-bold font-mono text-[#006C4C]">
+                          {activeAnalysis.estimatedBodyFatDelta}
+                        </span>
+                      </div>
                     </div>
-                    <div className="w-px h-8 bg-black/10"></div>
-                    <div>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-[#5E6266] block">
-                        Delta Change
-                      </span>
-                      <span className="text-xs font-bold font-mono text-[#006C4C]">
-                        {activeAnalysis.estimatedBodyFatDelta}
-                      </span>
-                    </div>
+
+                    <button
+                      disabled={isAnalyzing}
+                      onClick={async () => {
+                        if (currentCheckIn) {
+                          const result = await handleRunAiComparison(
+                            currentCheckIn.imageUrl,
+                            previousCheckIn?.imageUrl,
+                            currentCheckIn.weightKg,
+                            previousCheckIn?.weightKg,
+                            currentCheckIn.pose,
+                            currentCheckIn.notes
+                          );
+                          if (result) {
+                            setCheckIns((prev) => {
+                              const updated = prev.map((c) => (c.id === currentCheckIn.id ? { ...c, analysisResult: result } : c));
+                              try {
+                                localStorage.setItem('shiftlift_physique_checkins', JSON.stringify(updated));
+                              } catch (e) {}
+                              return updated;
+                            });
+                          }
+                        }
+                      }}
+                      className="px-3 py-2 rounded-xl bg-white hover:bg-slate-50 border border-black/10 text-slate-800 text-xs font-bold shadow-2xs flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all"
+                      title="Re-run AI Physique Analysis"
+                    >
+                      <Sparkles className={`w-3.5 h-3.5 ${isAnalyzing ? 'animate-spin text-amber-500' : 'text-[#006C4C]'}`} />
+                      <span>{isAnalyzing ? 'Analyzing...' : 'Re-run AI'}</span>
+                    </button>
                   </div>
                 </div>
 
@@ -769,17 +842,35 @@ export const GymProgressTracker: React.FC<GymProgressTrackerProps> = ({
 
             </div>
           ) : (
-            <div className="p-8 text-center bg-white rounded-2xl border border-dashed border-[#E1E3E1] space-y-3">
-              <div className="w-12 h-12 rounded-full bg-[#E7F3EF] flex items-center justify-center mx-auto text-[#006C4C]">
-                <Camera className="w-6 h-6" />
+            <div className="p-8 text-center bg-white rounded-2xl border border-dashed border-[#E1E3E1] space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-[#E7F3EF] flex items-center justify-center mx-auto text-[#006C4C] shadow-2xs">
+                {isAnalyzing ? (
+                  <div className="w-7 h-7 border-3 border-[#006C4C] border-t-transparent rounded-full animate-spin"></div>
+                ) : (
+                  <Camera className="w-7 h-7" />
+                )}
               </div>
-              <h4 className="text-sm font-bold text-[#1A1C1E]">
-                No AI Analysis for this Check-in Yet
-              </h4>
-              <p className="text-xs text-[#5E6266] max-w-md mx-auto">
-                Run our Gemini Vision physique engine to evaluate muscle fullness, calculate body fat deltas, and receive protocol coaching.
-              </p>
+
+              <div>
+                <h4 className="text-sm font-bold text-[#1A1C1E]">
+                  {isAnalyzing ? 'Analyzing Physique with Gemini AI...' : 'No AI Analysis for this Check-in Yet'}
+                </h4>
+                <p className="text-xs text-[#5E6266] max-w-md mx-auto mt-1 leading-relaxed">
+                  {isAnalyzing
+                    ? 'Comparing muscle fullness, estimating body fat percentage, and formulating 3,400 kcal shift nutrition advice...'
+                    : 'Run our Gemini Vision physique engine to evaluate muscle fullness, calculate body fat deltas, and receive protocol coaching.'}
+                </p>
+              </div>
+
+              {analysisError && (
+                <div className="max-w-md mx-auto p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2 text-left">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span>{analysisError}</span>
+                </div>
+              )}
+
               <button
+                type="button"
                 disabled={isAnalyzing}
                 onClick={async () => {
                   if (currentCheckIn) {
@@ -792,22 +883,30 @@ export const GymProgressTracker: React.FC<GymProgressTrackerProps> = ({
                       currentCheckIn.notes
                     );
                     if (result) {
-                      setCheckIns((prev) =>
-                        prev.map((c) => (c.id === currentCheckIn.id ? { ...c, analysisResult: result } : c))
-                      );
+                      setCheckIns((prev) => {
+                        const updated = prev.map((c) => (c.id === currentCheckIn.id ? { ...c, analysisResult: result } : c));
+                        try {
+                          localStorage.setItem('shiftlift_physique_checkins', JSON.stringify(updated));
+                        } catch (e) {}
+                        return updated;
+                      });
                     }
                   }
                 }}
-                className="px-4 py-2 rounded-xl bg-[#006C4C] hover:bg-[#00573D] text-white text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 mx-auto cursor-pointer"
+                className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-2 mx-auto cursor-pointer ${
+                  isAnalyzing
+                    ? 'bg-[#006C4C]/60 text-white cursor-wait'
+                    : 'bg-[#006C4C] hover:bg-[#00573D] text-white active:scale-95'
+                }`}
               >
                 {isAnalyzing ? (
                   <>
-                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                    <span>Analyzing with Gemini AI...</span>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    <span>Processing Vision AI Report...</span>
                   </>
                 ) : (
                   <>
-                    <Sparkles className="w-3.5 h-3.5" />
+                    <Sparkles className="w-4 h-4" />
                     <span>Run AI Physique Analysis</span>
                   </>
                 )}
