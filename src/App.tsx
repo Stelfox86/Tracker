@@ -21,16 +21,29 @@ import {
   MealDetailModal
 } from './components/MealDetailModal';
 import {
+  MealReminderModal
+} from './components/MealReminderModal';
+import {
+  NextMealBanner
+} from './components/NextMealBanner';
+import {
   LoggedMealRecord,
   MealSlotBaseline,
   MealAnalysisResult,
+  ReminderSettings,
+  DEFAULT_REMINDER_SETTINGS,
   PROTOCOL_MEAL_SLOTS
 } from './types';
+import {
+  sendSystemNotification,
+  playNotificationChime
+} from './utils/reminderService';
 import { SAMPLE_PRESET_MEALS } from './data/sampleMeals';
 import { Sparkles, Calendar, Plus, RefreshCw, Zap } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 const STORAGE_KEY_PREFIX = 'shiftlift_meals_day_';
+const REMINDERS_STORAGE_KEY = 'shiftlift_reminder_settings';
 
 export default function App() {
   const [shiftDay, setShiftDay] = useState<number>(1);
@@ -39,7 +52,85 @@ export default function App() {
   const [selectedSlotForScan, setSelectedSlotForScan] = useState<MealSlotBaseline | null>(null);
   const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
   const [isSchemaModalOpen, setIsSchemaModalOpen] = useState<boolean>(false);
+  const [isReminderModalOpen, setIsReminderModalOpen] = useState<boolean>(false);
   const [inspectingMeal, setInspectingMeal] = useState<LoggedMealRecord | null>(null);
+
+  // Reminder settings state with local persistence
+  const [reminderSettings, setReminderSettings] = useState<ReminderSettings>(() => {
+    try {
+      const saved = localStorage.getItem(REMINDERS_STORAGE_KEY);
+      if (saved) {
+        return { ...DEFAULT_REMINDER_SETTINGS, ...JSON.parse(saved) };
+      }
+    } catch (e) {
+      console.warn('Error reading reminder settings:', e);
+    }
+    return DEFAULT_REMINDER_SETTINGS;
+  });
+
+  const handleUpdateReminderSettings = (newSettings: ReminderSettings) => {
+    setReminderSettings(newSettings);
+    try {
+      localStorage.setItem(REMINDERS_STORAGE_KEY, JSON.stringify(newSettings));
+    } catch (e) {
+      console.warn('Error saving reminder settings:', e);
+    }
+  };
+
+  // Background timer to trigger live 30-min reminders
+  useEffect(() => {
+    if (!reminderSettings.enabled) return;
+
+    const checkReminders = () => {
+      const now = new Date();
+      const todayStr = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+      const currentMinutesTotal = now.getHours() * 60 + now.getMinutes();
+
+      let stateChanged = false;
+      const updatedTriggered = { ...(reminderSettings.lastTriggered || {}) };
+
+      PROTOCOL_MEAL_SLOTS.forEach((slot) => {
+        if (!reminderSettings.enabledSlots[slot.id]) return;
+
+        const [h, m] = slot.time.split(':').map(Number);
+        const slotMinutes = h * 60 + m;
+        const reminderTargetMinutes = slotMinutes - reminderSettings.advanceMinutes;
+
+        // Check if current time has hit the reminder window (within 1 minute)
+        if (
+          currentMinutesTotal >= reminderTargetMinutes &&
+          currentMinutesTotal <= reminderTargetMinutes + 1 &&
+          updatedTriggered[slot.id] !== todayStr
+        ) {
+          // Trigger Notification
+          sendSystemNotification(
+            `⏰ ${reminderSettings.advanceMinutes}-Min Reminder: ${slot.name}`,
+            {
+              body: `Target: ${slot.calories} kcal (${slot.protein_g}g P, ${slot.carbs_g}g C, ${slot.fat_g}g F) • ${slot.suggestedFoods}`,
+            }
+          );
+
+          if (reminderSettings.soundEnabled) {
+            playNotificationChime();
+          }
+
+          updatedTriggered[slot.id] = todayStr;
+          stateChanged = true;
+        }
+      });
+
+      if (stateChanged) {
+        handleUpdateReminderSettings({
+          ...reminderSettings,
+          lastTriggered: updatedTriggered,
+        });
+      }
+    };
+
+    checkReminders();
+    const interval = setInterval(checkReminders, 20000);
+    return () => clearInterval(interval);
+  }, [reminderSettings]);
 
   // Load meals from localStorage for the active shift day, or seed initial demo on first launch
   useEffect(() => {
@@ -209,17 +300,27 @@ export default function App() {
       {/* Top Navigation Bar */}
       <Header
         shiftDay={shiftDay}
+        reminderSettings={reminderSettings}
         onSelectShiftDay={(day) => setShiftDay(day)}
         onOpenGuide={() => setIsGuideOpen(true)}
         onOpenSchemaModal={() => setIsSchemaModalOpen(true)}
+        onOpenReminders={() => setIsReminderModalOpen(true)}
         onResetDay={handleResetDay}
         onExportJson={handleExportJson}
         onQuickAnalyzeClick={handleQuickAnalyzeClick}
       />
 
       {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-8">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
         
+        {/* Next Meal & Live Countdown Alert Banner */}
+        <NextMealBanner
+          loggedMeals={loggedMeals}
+          reminderSettings={reminderSettings}
+          onOpenReminderModal={() => setIsReminderModalOpen(true)}
+          onScanForSlot={handleScanForSlot}
+        />
+
         {/* Daily Macronutrient Targets & Progress Dashboard */}
         <DailyTargetsDashboard loggedMeals={loggedMeals} shiftDay={shiftDay} />
 
@@ -271,14 +372,32 @@ export default function App() {
           <span>
             ShiftLift Nutrition Vision API Engine • 4-Day Shift &amp; Early Lift Protocol (3,400 kcal | 230g P | 376g C | 100g F)
           </span>
-          <button
-            onClick={() => setIsSchemaModalOpen(true)}
-            className="text-[#006C4C] font-semibold hover:underline font-mono text-[11px]"
-          >
-            Raw JSON Output Schema Specs
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsReminderModalOpen(true)}
+              className="text-[#006C4C] font-semibold hover:underline text-[11px]"
+            >
+              Meal Reminders ({reminderSettings.advanceMinutes}m)
+            </button>
+            <span className="text-[#E1E3E1]">•</span>
+            <button
+              onClick={() => setIsSchemaModalOpen(true)}
+              className="text-[#006C4C] font-semibold hover:underline font-mono text-[11px]"
+            >
+              Raw JSON Output Schema Specs
+            </button>
+          </div>
         </div>
       </footer>
+
+      {/* Meal Reminder Modal */}
+      {isReminderModalOpen && (
+        <MealReminderModal
+          settings={reminderSettings}
+          onUpdateSettings={handleUpdateReminderSettings}
+          onClose={() => setIsReminderModalOpen(false)}
+        />
+      )}
 
       {/* Vision Analyzer Modal */}
       {isAnalyzerOpen && (

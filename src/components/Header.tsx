@@ -1,12 +1,25 @@
 import React from 'react';
-import { Flame, Clock, BookOpen, RotateCcw, Download, Sparkles, Calendar, Activity } from 'lucide-react';
-import { PROTOCOL_MEAL_SLOTS } from '../types';
+import {
+  Flame,
+  Clock,
+  BookOpen,
+  RotateCcw,
+  Download,
+  Sparkles,
+  Calendar,
+  Activity,
+  Bell,
+  BellRing
+} from 'lucide-react';
+import { PROTOCOL_MEAL_SLOTS, ReminderSettings } from '../types';
 
 interface HeaderProps {
   shiftDay: number;
+  reminderSettings: ReminderSettings;
   onSelectShiftDay: (day: number) => void;
   onOpenGuide: () => void;
   onOpenSchemaModal: () => void;
+  onOpenReminders: () => void;
   onResetDay: () => void;
   onExportJson: () => void;
   onQuickAnalyzeClick: () => void;
@@ -14,9 +27,11 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   shiftDay,
+  reminderSettings,
   onSelectShiftDay,
   onOpenGuide,
   onOpenSchemaModal,
+  onOpenReminders,
   onResetDay,
   onExportJson,
   onQuickAnalyzeClick,
@@ -93,7 +108,7 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="flex items-center gap-1.5">
               <button
                 onClick={onQuickAnalyzeClick}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold bg-[#006C4C] hover:bg-[#00573D] text-white shadow-sm transition-all active:scale-95"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold bg-[#006C4C] hover:bg-[#00573D] text-white shadow-sm transition-all active:scale-95 cursor-pointer"
                 title="Scan meal with Vision AI"
               >
                 <Sparkles className="w-3.5 h-3.5" />
@@ -101,8 +116,24 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
 
               <button
+                onClick={onOpenReminders}
+                className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                  reminderSettings.enabled
+                    ? 'bg-[#E7F3EF] border-[#006C4C]/30 text-[#006C4C] hover:bg-[#006C4C] hover:text-white'
+                    : 'bg-white border-[#E1E3E1] text-[#5E6266] hover:bg-[#F8F9FA]'
+                }`}
+                title={`Configure Meal Reminders (${reminderSettings.advanceMinutes}m advance)`}
+              >
+                <Bell className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Reminders</span>
+                <span className="text-[10px] font-bold px-1 rounded bg-black/10">
+                  {reminderSettings.advanceMinutes}m
+                </span>
+              </button>
+
+              <button
                 onClick={onOpenGuide}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-[#1A1C1E] bg-white hover:bg-[#F8F9FA] border border-[#E1E3E1] transition-colors"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-[#1A1C1E] bg-white hover:bg-[#F8F9FA] border border-[#E1E3E1] transition-colors cursor-pointer"
                 title="View Protocol Guide & Baseline Schedule"
               >
                 <BookOpen className="w-3.5 h-3.5 text-[#006A6A]" />

@@ -172,3 +172,27 @@ export interface SamplePresetMeal {
   description: string;
   expectedData: MealAnalysisResult;
 }
+
+export interface ReminderSettings {
+  enabled: boolean;
+  advanceMinutes: number; // e.g. 30, 15, 45, 0
+  soundEnabled: boolean;
+  enabledSlots: Record<string, boolean>; // slotId -> boolean
+  lastTriggered: Record<string, string>; // slotId -> date string YYYY-MM-DD
+}
+
+export const DEFAULT_REMINDER_SETTINGS: ReminderSettings = {
+  enabled: true,
+  advanceMinutes: 30,
+  soundEnabled: true,
+  enabledSlots: {
+    'slot-1': true,
+    'slot-2': true,
+    'slot-3': true,
+    'slot-4': true,
+    'slot-5': true,
+    'slot-6': true,
+    'slot-7': true,
+  },
+  lastTriggered: {},
+};
