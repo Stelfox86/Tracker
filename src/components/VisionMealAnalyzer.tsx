@@ -197,12 +197,12 @@ export const VisionMealAnalyzer: React.FC<VisionMealAnalyzerProps> = ({
     }
   };
 
-  // Helper to compress and downscale high-resolution mobile photos to clean lightweight JPEGs (~150KB)
+  // Helper to compress and downscale high-resolution mobile photos while preserving crystal-clear OCR label text
   const processAndCompressImage = (fileOrDataUrl: File | string): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
-        const MAX_DIM = 960;
+        const MAX_DIM = 1600; // Preserve high resolution for sharp food label OCR & nutrition facts tables
         let { width, height } = img;
         if (width > MAX_DIM || height > MAX_DIM) {
           if (width > height) {
@@ -224,7 +224,7 @@ export const VisionMealAnalyzer: React.FC<VisionMealAnalyzerProps> = ({
         ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
-        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.8);
+        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.88);
         resolve(compressedBase64);
       };
       img.onerror = () => {
@@ -251,51 +251,320 @@ export const VisionMealAnalyzer: React.FC<VisionMealAnalyzerProps> = ({
     });
   };
 
-  // Client-side fallback nutrition estimation in case of network drops / proxy timeouts
+  // Client-side intelligent nutrition parser in case of network drops / proxy timeouts
   const generateClientAnalysisFallback = (notes: string, slotHint?: string): MealAnalysisResult => {
-    const notesLower = (notes || '').toLowerCase();
+    const text = (notes || '').toLowerCase();
     const ingredients: Ingredient[] = [];
+    let mealTitle = 'Detected Meal';
 
-    // Parse eggs
-    let eggCount = 3;
-    const eggMatch = notesLower.match(/(\d+)\s*(?:whole\s*)?eggs?/);
-    if (eggMatch) eggCount = parseInt(eggMatch[1], 10);
-    ingredients.push({
-      name: `Whole Boiled Eggs (${eggCount}x)`,
-      estimated_weight_g: eggCount * 50,
-      calories: Math.round(eggCount * 74),
-      protein_g: Math.round(eggCount * 6.3 * 10) / 10,
-      carbs_g: Math.round(eggCount * 0.4 * 10) / 10,
-      fat_g: Math.round(eggCount * 5.0 * 10) / 10,
-    });
+    // 1. Direct explicit macros (e.g. "45g protein 60g carbs")
+    const directProteinMatch = text.match(/(\d+(?:\.\d+)?)\s*g?\s*(?:p|protein)/i);
+    const directCarbsMatch = text.match(/(\d+(?:\.\d+)?)\s*g?\s*(?:c|carbs?|carbohydrates?)/i);
+    const directFatMatch = text.match(/(\d+(?:\.\d+)?)\s*g?\s*(?:f|fat)/i);
+    const directCalMatch = text.match(/(\d+)\s*(?:kcal|calories|cals?)/i);
 
-    // Parse oats
-    if (notesLower.includes('oat') || notesLower.includes('porridge')) {
-      let oatGrams = 100;
-      const oatMatch = notesLower.match(/(\d+)\s*g(?:rams?)?\s*(?:of\s*)?oats?/);
-      if (oatMatch) oatGrams = parseInt(oatMatch[1], 10);
+    if (directProteinMatch || directCarbsMatch || directCalMatch) {
+      const p = directProteinMatch ? parseFloat(directProteinMatch[1]) : 35;
+      const c = directCarbsMatch ? parseFloat(directCarbsMatch[1]) : 45;
+      const f = directFatMatch ? parseFloat(directFatMatch[1]) : 12;
+      const cal = directCalMatch ? parseInt(directCalMatch[1], 10) : Math.round(p * 4 + c * 4 + f * 9);
+
       ingredients.push({
-        name: `Rolled / Porridge Oats (${oatGrams}g)`,
-        estimated_weight_g: oatGrams,
-        calories: Math.round((oatGrams / 100) * 389),
-        protein_g: Math.round((oatGrams / 100) * 16.9 * 10) / 10,
-        carbs_g: Math.round((oatGrams / 100) * 66.3 * 10) / 10,
-        fat_g: Math.round((oatGrams / 100) * 6.9 * 10) / 10,
+        name: notes ? notes.trim() : 'Logged Item from Label',
+        estimated_weight_g: Math.round(p + c + f + 120),
+        calories: cal,
+        protein_g: Math.round(p * 10) / 10,
+        carbs_g: Math.round(c * 10) / 10,
+        fat_g: Math.round(f * 10) / 10,
       });
+      mealTitle = notes ? notes.slice(0, 35) : 'Custom Food Item';
+    } else {
+      // 2. Dynamic item parsing
+
+      // Chicken / Turkey
+      if (text.includes('chicken') || text.includes('turkey') || text.includes('poultry')) {
+        let grams = 200;
+        const m = text.match(/(\d+)\s*g(?:rams?)?\s*(?:of\s*)?(?:chicken|turkey)/);
+        if (m) grams = parseInt(m[1], 10);
+        ingredients.push({
+          name: `Cooked Lean Chicken Breast (${grams}g)`,
+          estimated_weight_g: grams,
+          calories: Math.round((grams / 100) * 165),
+          protein_g: Math.round((grams / 100) * 31.0 * 10) / 10,
+          carbs_g: 0,
+          fat_g: Math.round((grams / 100) * 3.6 * 10) / 10,
+        });
+        mealTitle = 'Chicken Breast & Carbs';
+      }
+
+      // Beef / Mince / Steak / Pork
+      if (text.includes('mince') || text.includes('beef') || text.includes('steak') || text.includes('pork')) {
+        let grams = 200;
+        const m = text.match(/(\d+)\s*g(?:rams?)?\s*(?:of\s*)?(?:mince|beef|steak|pork)/);
+        if (m) grams = parseInt(m[1], 10);
+        ingredients.push({
+          name: `Lean Beef/Pork Mince 5% (${grams}g)`,
+          estimated_weight_g: grams,
+          calories: Math.round((grams / 100) * 170),
+          protein_g: Math.round((grams / 100) * 26.0 * 10) / 10,
+          carbs_g: 0,
+          fat_g: Math.round((grams / 100) * 7.0 * 10) / 10,
+        });
+        mealTitle = 'Lean Beef & Rice Meal';
+      }
+
+      // Fish / Tuna / Pollock / Salmon
+      if (text.includes('tuna') || text.includes('salmon') || text.includes('fish') || text.includes('pollock') || text.includes('mackerel')) {
+        let grams = 160;
+        const m = text.match(/(\d+)\s*g(?:rams?)?\s*(?:of\s*)?(?:tuna|salmon|fish|pollock|mackerel)/);
+        if (m) grams = parseInt(m[1], 10);
+        const isFatty = text.includes('salmon') || text.includes('mackerel');
+        ingredients.push({
+          name: isFatty ? `Wild Salmon / Mackerel (${grams}g)` : `Tuna in Brine Drained (${grams}g)`,
+          estimated_weight_g: grams,
+          calories: isFatty ? Math.round((grams / 100) * 208) : Math.round((grams / 100) * 110),
+          protein_g: isFatty ? Math.round((grams / 100) * 22.0 * 10) / 10 : Math.round((grams / 100) * 25.0 * 10) / 10,
+          carbs_g: 0,
+          fat_g: isFatty ? Math.round((grams / 100) * 13.0 * 10) / 10 : Math.round((grams / 100) * 0.8 * 10) / 10,
+        });
+        mealTitle = isFatty ? 'Salmon & Potatoes Dinner' : 'Tuna & Carbohydrate Meal';
+      }
+
+      // Rice
+      if (text.includes('rice')) {
+        let grams = 250;
+        const m = text.match(/(\d+)\s*g(?:rams?)?\s*(?:of\s*)?rice/);
+        if (m) grams = parseInt(m[1], 10);
+        ingredients.push({
+          name: `Cooked Jasmine / Basmati Rice (${grams}g)`,
+          estimated_weight_g: grams,
+          calories: Math.round((grams / 100) * 130),
+          protein_g: Math.round((grams / 100) * 2.7 * 10) / 10,
+          carbs_g: Math.round((grams / 100) * 28.2 * 10) / 10,
+          fat_g: Math.round((grams / 100) * 0.3 * 10) / 10,
+        });
+      }
+
+      // Potatoes / Sweet Potatoes
+      if (text.includes('potato') || text.includes('sweet potato') || text.includes('mash')) {
+        let grams = 300;
+        const m = text.match(/(\d+)\s*g(?:rams?)?\s*(?:of\s*)?(?:potato|sweet potato|potatoes)/);
+        if (m) grams = parseInt(m[1], 10);
+        ingredients.push({
+          name: `Roasted / Boiled Potatoes (${grams}g)`,
+          estimated_weight_g: grams,
+          calories: Math.round((grams / 100) * 87),
+          protein_g: Math.round((grams / 100) * 2.0 * 10) / 10,
+          carbs_g: Math.round((grams / 100) * 20.0 * 10) / 10,
+          fat_g: Math.round((grams / 100) * 0.2 * 10) / 10,
+        });
+      }
+
+      // Pasta
+      if (text.includes('pasta') || text.includes('spaghetti') || text.includes('penne')) {
+        let grams = 200;
+        const m = text.match(/(\d+)\s*g(?:rams?)?\s*(?:of\s*)?pasta/);
+        if (m) grams = parseInt(m[1], 10);
+        ingredients.push({
+          name: `Cooked Pasta (${grams}g)`,
+          estimated_weight_g: grams,
+          calories: Math.round((grams / 100) * 158),
+          protein_g: Math.round((grams / 100) * 5.8 * 10) / 10,
+          carbs_g: Math.round((grams / 100) * 31.0 * 10) / 10,
+          fat_g: Math.round((grams / 100) * 0.9 * 10) / 10,
+        });
+      }
+
+      // Eggs
+      if (text.includes('egg') || text.includes('scramble') || text.includes('omelet')) {
+        let eggCount = 4;
+        const eggMatch = text.match(/(\d+)\s*(?:whole\s*)?eggs?/);
+        if (eggMatch) eggCount = parseInt(eggMatch[1], 10);
+        ingredients.push({
+          name: `Whole Boiled / Poached Eggs (${eggCount}x)`,
+          estimated_weight_g: eggCount * 50,
+          calories: Math.round(eggCount * 74),
+          protein_g: Math.round(eggCount * 6.3 * 10) / 10,
+          carbs_g: Math.round(eggCount * 0.4 * 10) / 10,
+          fat_g: Math.round(eggCount * 5.0 * 10) / 10,
+        });
+        if (ingredients.length === 1) mealTitle = 'Hard-Boiled Eggs Breakfast';
+      }
+
+      // Oats / Porridge
+      if (text.includes('oat') || text.includes('porridge')) {
+        let oatGrams = 100;
+        const oatMatch = text.match(/(\d+)\s*g(?:rams?)?\s*(?:of\s*)?oats?/);
+        if (oatMatch) oatGrams = parseInt(oatMatch[1], 10);
+        ingredients.push({
+          name: `Rolled / Porridge Oats (${oatGrams}g)`,
+          estimated_weight_g: oatGrams,
+          calories: Math.round((oatGrams / 100) * 380),
+          protein_g: Math.round((oatGrams / 100) * 13.0 * 10) / 10,
+          carbs_g: Math.round((oatGrams / 100) * 67.0 * 10) / 10,
+          fat_g: Math.round((oatGrams / 100) * 6.5 * 10) / 10,
+        });
+        if (ingredients.length <= 2) mealTitle = 'Porridge Oats & Protein';
+      }
+
+      // Whey / Protein Powder / Shake
+      if (text.includes('whey') || text.includes('protein powder') || text.includes('shake') || text.includes('isolate')) {
+        let scoops = 1;
+        const scoopMatch = text.match(/(\d+)\s*(?:scoops?|servings?)/);
+        if (scoopMatch) scoops = parseInt(scoopMatch[1], 10);
+        const grams = scoops * 30;
+        ingredients.push({
+          name: `Whey Protein Isolate (${scoops} scoop / ${grams}g)`,
+          estimated_weight_g: grams,
+          calories: scoops * 120,
+          protein_g: scoops * 25,
+          carbs_g: scoops * 2,
+          fat_g: scoops * 1,
+        });
+        if (ingredients.length === 1) mealTitle = 'Whey Isolate Protein Shake';
+      }
+
+      // Protein Bar
+      if (text.includes('bar') || text.includes('protein bar') || text.includes('grenade')) {
+        ingredients.push({
+          name: 'High Protein Bar (60g)',
+          estimated_weight_g: 60,
+          calories: 215,
+          protein_g: 21,
+          carbs_g: 20,
+          fat_g: 8,
+        });
+        if (ingredients.length === 1) mealTitle = 'High Protein Snack Bar';
+      }
+
+      // Greek Yogurt / Quark / Cottage Cheese
+      if (text.includes('quark') || text.includes('yogurt') || text.includes('yoghurt') || text.includes('cottage cheese') || text.includes('skyr')) {
+        let grams = 250;
+        const m = text.match(/(\d+)\s*g(?:rams?)?\s*(?:of\s*)?(?:quark|yogurt|cottage cheese|skyr)/);
+        if (m) grams = parseInt(m[1], 10);
+        ingredients.push({
+          name: `0% Fat Quark / Greek Yogurt (${grams}g)`,
+          estimated_weight_g: grams,
+          calories: Math.round((grams / 100) * 60),
+          protein_g: Math.round((grams / 100) * 11.0 * 10) / 10,
+          carbs_g: Math.round((grams / 100) * 4.0 * 10) / 10,
+          fat_g: Math.round((grams / 100) * 0.2 * 10) / 10,
+        });
+        if (ingredients.length === 1) mealTitle = 'Quark / Greek Yogurt Bowl';
+      }
+
+      // Bread / Toast / Bagels / Wraps
+      if (text.includes('bread') || text.includes('toast') || text.includes('wrap') || text.includes('bagel') || text.includes('tortilla')) {
+        let count = 2;
+        const m = text.match(/(\d+)\s*(?:slices?|wraps?|bagels?)/);
+        if (m) count = parseInt(m[1], 10);
+        const isWrap = text.includes('wrap') || text.includes('tortilla');
+        ingredients.push({
+          name: isWrap ? `White/Wholemeal Tortilla Wraps (${count}x)` : `Wholemeal Sliced Bread (${count} slices)`,
+          estimated_weight_g: count * 40,
+          calories: count * (isWrap ? 140 : 85),
+          protein_g: count * (isWrap ? 4 : 4),
+          carbs_g: count * (isWrap ? 26 : 15),
+          fat_g: count * (isWrap ? 2.5 : 1),
+        });
+      }
+
+      // Peanut Butter / Nuts
+      if (text.includes('peanut butter') || text.includes('pb') || text.includes('almond butter') || text.includes('nuts') || text.includes('peanuts')) {
+        let grams = 30;
+        const m = text.match(/(\d+)\s*g(?:rams?)?\s*(?:of\s*)?(?:peanut butter|pb|nuts)/);
+        if (m) grams = parseInt(m[1], 10);
+        ingredients.push({
+          name: `Natural Peanut / Nut Butter (${grams}g)`,
+          estimated_weight_g: grams,
+          calories: Math.round((grams / 30) * 180),
+          protein_g: Math.round((grams / 30) * 8.0 * 10) / 10,
+          carbs_g: Math.round((grams / 30) * 6.0 * 10) / 10,
+          fat_g: Math.round((grams / 30) * 15.0 * 10) / 10,
+        });
+      }
+
+      // Banana / Fruit / Berries
+      if (text.includes('banana') || text.includes('apple') || text.includes('berry') || text.includes('berries') || text.includes('fruit')) {
+        if (text.includes('banana')) {
+          ingredients.push({
+            name: 'Fresh Medium Banana (1x / 118g)',
+            estimated_weight_g: 118,
+            calories: 105,
+            protein_g: 1.3,
+            carbs_g: 27.0,
+            fat_g: 0.3,
+          });
+        }
+        if (text.includes('berry') || text.includes('berries') || text.includes('blueberry') || text.includes('strawberry')) {
+          ingredients.push({
+            name: 'Mixed Fresh Berries (80g)',
+            estimated_weight_g: 80,
+            calories: 45,
+            protein_g: 0.8,
+            carbs_g: 10.0,
+            fat_g: 0.3,
+          });
+        }
+      }
+
+      // Vegetables / Greens
+      if (text.includes('green') || text.includes('broccoli') || text.includes('spinach') || text.includes('veg') || text.includes('salad')) {
+        ingredients.push({
+          name: 'Steamed Greens / Broccoli (100g)',
+          estimated_weight_g: 100,
+          calories: 35,
+          protein_g: 2.8,
+          carbs_g: 5.0,
+          fat_g: 0.4,
+        });
+      }
+
+      // Olive Oil
+      if (text.includes('oil') || text.includes('olive oil')) {
+        ingredients.push({
+          name: 'Extra Virgin Olive Oil (1 tbsp / 14g)',
+          estimated_weight_g: 14,
+          calories: 120,
+          protein_g: 0,
+          carbs_g: 0,
+          fat_g: 14.0,
+        });
+      }
     }
 
-    if (notesLower.includes('whey') || notesLower.includes('protein powder')) {
-      ingredients.push({
-        name: 'Whey Isolate Protein (30g)',
-        estimated_weight_g: 30,
-        calories: 120,
-        protein_g: 25,
-        carbs_g: 2,
-        fat_g: 1,
-      });
+    // Default fallback if no specific keywords
+    if (ingredients.length === 0) {
+      ingredients.push(
+        {
+          name: 'Lean Cooked Chicken Breast',
+          estimated_weight_g: 180,
+          calories: 297,
+          protein_g: 55.8,
+          carbs_g: 0,
+          fat_g: 6.5,
+        },
+        {
+          name: 'Cooked Jasmine Rice',
+          estimated_weight_g: 220,
+          calories: 286,
+          protein_g: 5.9,
+          carbs_g: 62.0,
+          fat_g: 0.7,
+        },
+        {
+          name: 'Mixed Steamed Greens',
+          estimated_weight_g: 80,
+          calories: 28,
+          protein_g: 2.2,
+          carbs_g: 4.0,
+          fat_g: 0.3,
+        }
+      );
+      mealTitle = 'Grilled Chicken & Jasmine Rice Bowl';
     }
 
-    let matchedSlotName = slotHint && slotHint !== 'auto' ? slotHint : 'Work Arrival / Breakfast (07:00)';
+    let matchedSlotName = slotHint && slotHint !== 'auto' ? slotHint : 'Work Lunch (12:00)';
     if (!slotHint || slotHint === 'auto') {
       const hour = new Date().getHours();
       if (hour < 5) matchedSlotName = 'Pre-Gym Fuel (03:35)';
@@ -307,10 +576,10 @@ export const VisionMealAnalyzer: React.FC<VisionMealAnalyzerProps> = ({
       else matchedSlotName = 'Pre-Bed Recovery (21:30)';
     }
 
-    const calcCalories = ingredients.reduce((sum, ing) => sum + ing.calories, 0);
-    const calcProtein = ingredients.reduce((sum, ing) => sum + ing.protein_g, 0);
-    const calcCarbs = ingredients.reduce((sum, ing) => sum + ing.carbs_g, 0);
-    const calcFat = ingredients.reduce((sum, ing) => sum + ing.fat_g, 0);
+    const calcCalories = ingredients.reduce((sum, ing) => sum + (Number(ing.calories) || 0), 0);
+    const calcProtein = ingredients.reduce((sum, ing) => sum + (Number(ing.protein_g) || 0), 0);
+    const calcCarbs = ingredients.reduce((sum, ing) => sum + (Number(ing.carbs_g) || 0), 0);
+    const calcFat = ingredients.reduce((sum, ing) => sum + (Number(ing.fat_g) || 0), 0);
 
     const meal_totals = {
       calories: Math.round(calcCalories),
@@ -319,10 +588,10 @@ export const VisionMealAnalyzer: React.FC<VisionMealAnalyzerProps> = ({
       fat_g: Math.round(calcFat * 10) / 10,
     };
 
-    const targetSlot = PROTOCOL_MEAL_SLOTS.find((s) => s.name === matchedSlotName) || PROTOCOL_MEAL_SLOTS[2];
+    const targetSlot = PROTOCOL_MEAL_SLOTS.find((s) => s.name === matchedSlotName) || PROTOCOL_MEAL_SLOTS[3];
 
     return {
-      meal_name: notesLower.includes('oat') ? 'Hard-Boiled Eggs & Porridge Oats' : 'Hard-Boiled Eggs Breakfast',
+      meal_name: mealTitle,
       matched_slot: matchedSlotName,
       ingredients,
       meal_totals,
