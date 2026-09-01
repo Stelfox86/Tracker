@@ -377,18 +377,60 @@ export const VisionMealAnalyzer: React.FC<VisionMealAnalyzerProps> = ({
 
       // Eggs
       if (text.includes('egg') || text.includes('scramble') || text.includes('omelet')) {
-        let eggCount = 4;
-        const eggMatch = text.match(/(\d+)\s*(?:whole\s*)?eggs?/);
-        if (eggMatch) eggCount = parseInt(eggMatch[1], 10);
+        let eggCount = 2;
+        const numMatch = text.match(/(\d+)\s*(?:whole\s*)?eggs?/);
+        if (numMatch) {
+          eggCount = parseInt(numMatch[1], 10);
+        } else if (text.includes('three') || text.includes('3')) {
+          eggCount = 3;
+        } else if (text.includes('four') || text.includes('4')) {
+          eggCount = 4;
+        } else if (text.includes('one') || text.includes('1')) {
+          eggCount = 1;
+        } else if (text.includes('two') || text.includes('2')) {
+          eggCount = 2;
+        }
+
         ingredients.push({
-          name: `Whole Boiled / Poached Eggs (${eggCount}x)`,
+          name: `Soft / Hard-Boiled Eggs (${eggCount}x)`,
           estimated_weight_g: eggCount * 50,
-          calories: Math.round(eggCount * 74),
+          calories: Math.round(eggCount * 72),
           protein_g: Math.round(eggCount * 6.3 * 10) / 10,
           carbs_g: Math.round(eggCount * 0.4 * 10) / 10,
           fat_g: Math.round(eggCount * 5.0 * 10) / 10,
         });
-        if (ingredients.length === 1) mealTitle = 'Hard-Boiled Eggs Breakfast';
+        mealTitle = 'Boiled Eggs Breakfast';
+      }
+
+      // Bread / Toast / Toast Soldiers / Bagels / Wraps
+      if (text.includes('bread') || text.includes('toast') || text.includes('soldier') || text.includes('wrap') || text.includes('bagel') || text.includes('tortilla')) {
+        let count = 2;
+        const m = text.match(/(\d+)\s*(?:slices?|wraps?|bagels?|pieces?)/);
+        if (m) count = parseInt(m[1], 10);
+        const isWrap = text.includes('wrap') || text.includes('tortilla');
+        ingredients.push({
+          name: isWrap ? `White/Wholemeal Tortilla Wraps (${count}x)` : `Sliced Toast Soldiers (${count} slices / ${count * 35}g)`,
+          estimated_weight_g: count * 35,
+          calories: count * (isWrap ? 140 : 85),
+          protein_g: count * (isWrap ? 4 : 3.5),
+          carbs_g: count * (isWrap ? 26 : 15),
+          fat_g: count * (isWrap ? 2.5 : 1),
+        });
+        if (text.includes('egg')) {
+          mealTitle = 'Soft-Boiled Eggs with Toast Soldiers';
+        }
+      }
+
+      // Butter / Margarine Spread
+      if (text.includes('butter') && !text.includes('peanut butter') && !text.includes('almond butter')) {
+        ingredients.push({
+          name: 'Butter Spread on Toast (10g)',
+          estimated_weight_g: 10,
+          calories: 72,
+          protein_g: 0.1,
+          carbs_g: 0.1,
+          fat_g: 8.0,
+        });
       }
 
       // Oats / Porridge

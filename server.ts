@@ -37,6 +37,30 @@ function getGenAI(): GoogleGenAI {
   return genAIClient;
 }
 
+// Helper to call Gemini models with resilient fallback sequence against transient 503 capacity spikes
+async function generateGeminiContentWithFallback(ai: GoogleGenAI, config: any) {
+  const modelsToTry = [
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-3.7-flash',
+    'gemini-3.1-flash-lite',
+  ];
+  let lastErr = null;
+  for (const model of modelsToTry) {
+    try {
+      const resp = await ai.models.generateContent({
+        ...config,
+        model,
+      });
+      return resp;
+    } catch (err: any) {
+      console.warn(`Model ${model} failed (${err?.message || err?.status}), trying next candidate...`);
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
 const PROTOCOL_SLOTS_MAP: Record<string, { calories: number; protein_g: number; carbs_g: number; fat_g: number }> = {
   'Pre-Gym Fuel (03:35)': { calories: 190, protein_g: 4, carbs_g: 31, fat_g: 8 },
   'Post-Gym Exit (05:15)': { calories: 480, protein_g: 35, carbs_g: 72, fat_g: 6 },
@@ -242,18 +266,61 @@ function parseNutritionFromTextAndContext(
 
     // Eggs
     if (text.includes('egg') || text.includes('scramble') || text.includes('omelet')) {
-      let eggCount = 4;
-      const eggMatch = text.match(/(\d+)\s*(?:whole\s*)?eggs?/);
-      if (eggMatch) eggCount = parseInt(eggMatch[1], 10);
+      let eggCount = 2;
+      const numMatch = text.match(/(\d+)\s*(?:whole\s*)?eggs?/);
+      if (numMatch) {
+        eggCount = parseInt(numMatch[1], 10);
+      } else if (text.includes('three') || text.includes('3')) {
+        eggCount = 3;
+      } else if (text.includes('four') || text.includes('4')) {
+        eggCount = 4;
+      } else if (text.includes('one') || text.includes('1')) {
+        eggCount = 1;
+      } else if (text.includes('two') || text.includes('2')) {
+        eggCount = 2;
+      }
+
       ingredients.push({
-        name: `Whole Boiled / Poached Eggs (${eggCount}x)`,
+        name: `Soft / Hard-Boiled Eggs (${eggCount}x)`,
         estimated_weight_g: eggCount * 50,
-        calories: Math.round(eggCount * 74),
+        calories: Math.round(eggCount * 72),
         protein_g: Math.round(eggCount * 6.3 * 10) / 10,
         carbs_g: Math.round(eggCount * 0.4 * 10) / 10,
         fat_g: Math.round(eggCount * 5.0 * 10) / 10,
       });
-      if (ingredients.length === 1) mealTitle = 'Hard-Boiled Eggs Breakfast';
+      mealTitle = 'Boiled Eggs Breakfast';
+    }
+
+    // Bread / Toast / Toast Soldiers / Bagels / Wraps
+    if (text.includes('bread') || text.includes('toast') || text.includes('soldier') || text.includes('wrap') || text.includes('bagel') || text.includes('tortilla')) {
+      let count = 2;
+      const m = text.match(/(\d+)\s*(?:slices?|wraps?|bagels?|pieces?)/);
+      if (m) count = parseInt(m[1], 10);
+      const isWrap = text.includes('wrap') || text.includes('tortilla');
+      const isToast = text.includes('toast') || text.includes('soldier') || text.includes('bread');
+      ingredients.push({
+        name: isWrap ? `White/Wholemeal Tortilla Wraps (${count}x)` : `Sliced Toast Soldiers (${count} slices / ${count * 35}g)`,
+        estimated_weight_g: count * 35,
+        calories: count * (isWrap ? 140 : 85),
+        protein_g: count * (isWrap ? 4 : 3.5),
+        carbs_g: count * (isWrap ? 26 : 15),
+        fat_g: count * (isWrap ? 2.5 : 1),
+      });
+      if (text.includes('egg')) {
+        mealTitle = 'Soft-Boiled Eggs with Toast Soldiers';
+      }
+    }
+
+    // Butter / Margarine Spread
+    if (text.includes('butter') && !text.includes('peanut butter') && !text.includes('almond butter')) {
+      ingredients.push({
+        name: 'Butter Spread on Toast (10g)',
+        estimated_weight_g: 10,
+        calories: 72,
+        protein_g: 0.1,
+        carbs_g: 0.1,
+        fat_g: 8.0,
+      });
     }
 
     // Oats / Porridge
@@ -504,32 +571,16 @@ app.post('/api/analyze-meal', async (req, res) => {
       });
     }
 
-    // Clean base64 data if it contains a data URL prefix
-    let cleanBase64 = imageBase64;
-    let actualMime = mimeType || 'image/jpeg';
-    if (imageBase64.includes(';base64,')) {
-      const parts = imageBase64.split(';base64,');
-      cleanBase64 = parts[1];
-      const match = parts[0].match(/data:(.*?)$/);
-      if (match && match[1]) {
-        actualMime = match[1];
-      }
-    }
-
-    // Strip any trailing whitespace, linebreaks, or non-base64 artifacts
-    cleanBase64 = cleanBase64.replace(/\s+/g, '');
-
-    // Normalize mimeType for Gemini Vision API compatibility
-    if (!['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(actualMime.toLowerCase())) {
-      actualMime = 'image/jpeg';
-    }
+    const resolvedImg = await resolveImageBase64(imageBase64, mimeType);
+    const cleanBase64 = resolvedImg ? resolvedImg.base64 : imageBase64.replace(/\s+/g, '');
+    const actualMime = resolvedImg ? resolvedImg.mimeType : 'image/jpeg';
 
     const ai = getGenAI();
 
     let userPromptText = `Analyze this food image with high precision for an athlete following a high-protein 4-Day Shift Protocol.
 
 1. **LABEL READING / OCR**: If a nutrition facts panel, "per 100g / per serving" table, packaging label, or brand text is visible in the photo, READ AND EXTRACT THE EXACT PRINTED NUMBERS for serving weight, calories, protein (g), carbs (g), and fat (g).
-2. **PLATED / VISUAL FOOD**: If prepared food is shown, identify every item (chicken, beef, eggs, rice, oats, potatoes, greens, etc.), accurately estimate weight in grams based on visual scale, and calculate macros using real nutritional values.
+2. **PLATED / VISUAL FOOD**: If prepared food is shown, identify every item (chicken, beef, eggs, rice, oats, potatoes, greens, etc.), accurately estimate weight in grams based on visual scale, and calculate macros using real nutritional values. For example, 2 boiled eggs + 2 slices of toast is ~18-20g protein, not 60g+.
 3. **PRECISION TOTALS**: Sum each ingredient's calories and macros accurately into meal_totals.`;
 
     if (slotHint) {
@@ -553,8 +604,7 @@ app.post('/api/analyze-meal', async (req, res) => {
         text: userPromptText,
       };
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.7-flash',
+      const response = await generateGeminiContentWithFallback(ai, {
         contents: [
           {
             role: 'user',
@@ -807,8 +857,7 @@ app.post('/api/analyze-physique', async (req, res) => {
 
       // Only attempt vision API if we have valid image data
       if (contentsParts.length > 1) {
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.7-flash',
+        const response = await generateGeminiContentWithFallback(ai, {
           contents: { parts: contentsParts },
           config: {
             systemInstruction: PHYSIQUE_SYSTEM_PROMPT,
